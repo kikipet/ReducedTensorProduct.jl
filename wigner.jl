@@ -3,11 +3,12 @@ module wigner
 using LinearAlgebra
 
 struct tp
-    op::Vector
-    args::Vector
+    op::Tuple
+    args::Tuple
 end
 
 struct input
+    # start and stop are both inclusive
     tensor::Int
     start::Int
     stop::Int

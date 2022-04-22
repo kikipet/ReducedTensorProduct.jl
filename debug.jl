@@ -1,3 +1,3 @@
 include("rtp.jl")
 
-_wigner_nj([o3.Irreps("1x1o"), o3.Irreps("1x1o")])
+reduced_tensor_product("ijkl=jikl=ikjl=ijlk", Dict(['i' => o3.Irrep("1e")]))

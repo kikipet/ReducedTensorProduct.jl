@@ -1,20 +1,29 @@
 module o3
 
 struct Irrep
+    """Irreducible representation of O(3).
+    l: degree
+    p: parity; 1 if even, -1 if odd"""
     l::Int
     p::Int
 end
 
 struct MulIr
+    """Represents multiple copies of a single irrep.
+    mul: multiplicity
+    ir: single Irrep
+    """
     mul::Int
     ir::Irrep
 end
 
 struct Irreps
+    """Represents the sum of multiple irreps."""
     mulirs::Vector{MulIr}
 end
 
 function Irrep(l)
+    """Creates an Irrep object."""
     if typeof(l) == Irrep
         return l
     end
@@ -43,10 +52,12 @@ function Irrep(l)
 end
 
 function dim(I::Irrep)
+    """Calculates dimension of a given irrep."""
     return 2 * I.l + 1
 end
 
 function dim(I::Irreps)
+    """Calculates dimension of a direct sum of irreps."""
     d = 0
     for mul_ir in I
         d += mul_ir.mul * dim(mul_ir.ir)
@@ -55,6 +66,7 @@ function dim(I::Irreps)
 end
 
 function dim(I::Vector)
+    """Calculates dimension of a direct sum of irreps."""
     d = 0
     for mul_ir in I
         d += mul_ir.mul * dim(mul_ir.ir)
@@ -63,6 +75,7 @@ function dim(I::Vector)
 end
 
 function Irreps(irreps)
+    """Creates an Irreps object."""
     out = []
     if typeof(irreps) == Irrep
         push!(out, MulIr(1, irreps))
@@ -120,6 +133,7 @@ function Irreps(irreps)
 end
 
 function irrep_in(irrep, irreps)
+    """Determine whether an irrep is included in a given Irreps object."""
     for mul_ir in irreps
         if irrep == mul_ir.ir
             return true
@@ -142,6 +156,41 @@ function Base.:*(f::Int, g::Irrep)
 end
 function Base.:*(f::Irrep, g::Int)
     return Irreps([(g, f)])
+end
+
+function Base.:>(f::Irrep, g::Irrep)
+    if f.l > g.l
+        return true
+    end
+    return f.l == g.l && f.p > g.p
+end
+
+function Base.:<(f::Irrep, g::Irrep)
+    if f.l < g.l
+        return true
+    end
+    return f.l == g.l && f.p < g.p
+end
+
+function Base.:>=(f::Irrep, g::Irrep)
+    if f.l > g.l
+        return true
+    end
+    return f.l == g.l && f.p >= g.p
+end
+
+function Base.:<=(f::Irrep, g::Irrep)
+    if f.l < g.l
+        return true
+    end
+    return f.l == g.l && f.p <= g.p
+end
+
+function Base.:isless(f::Irrep, g::Irrep)
+    if f.l < g.l
+        return true
+    end
+    return f.l == g.l && f.p < g.p
 end
 
 function simplify(irreps)

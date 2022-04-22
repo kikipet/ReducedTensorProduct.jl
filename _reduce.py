@@ -48,6 +48,8 @@ def _wigner_nj(*irrepss, normalization='component', filter_ir_mid=None, dtype=No
                 if normalization == 'norm':
                     C *= ir_left.dim**0.5 * ir.dim**0.5
 
+                s1 = C_left.flatten(1).shape
+                s2 = C.shape
                 C = torch.einsum('jk,ijl->ikl', C_left.flatten(1), C)
                 C = C.reshape(ir_out.dim, *(irreps.dim for irreps in irrepss_left), ir.dim)
                 for u in range(mul):
@@ -196,9 +198,9 @@ class ReducedTensorProducts(CodeGenMixin, torch.nn.Module):
         for ir in Ps:
             mul = len(Ps[ir])
             paths = [path for path, _ in Ps[ir]]
-            base_o3 = torch.stack([R for _, R in Ps[ir]])
+            base_o3 = torch.stack([R for _, R in Ps[ir]]) # (1, 1, 3, 3)
 
-            R = base_o3.flatten(2)  # [multiplicity, ir, input basis] (u,j,omega)
+            R = base_o3.flatten(2)  # [multiplicity, ir, input basis] (u,j,omega)    # (1, 1, 9)
 
             proj_s = []  # list of projectors into vector space
             for j in range(ir.dim):

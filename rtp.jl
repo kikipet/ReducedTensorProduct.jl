@@ -3,49 +3,6 @@ using LinearAlgebra
 include("irreps.jl")
 include("wigner.jl")
 
-# >>> irreps = {'i': Irreps('1x1o'), 'j': Irreps('1x1o')}
-
-# >>> _wigner_nj([irreps[i] for i in 'ij'])
-# [(0e, tp(op=(1o, 1o, 0e), args=(input(tensor=0, start=0, stop=3), input(tensor=1, start=0, stop=3))), tensor([[[0.5774, 0.0000, 0.0000],
-#          [0.0000, 0.5774, 0.0000],
-#          [0.0000, 0.0000, 0.5774]]])),
-
-#  (1e, tp(op=(1o, 1o, 1e), args=(input(tensor=0, start=0, stop=3), input(tensor=1, start=0, stop=3))), tensor([[[ 0.0000,  0.0000,  0.0000],
-#          [ 0.0000,  0.0000,  0.7071],
-#          [ 0.0000, -0.7071,  0.0000]],
-
-#         [[ 0.0000,  0.0000, -0.7071],
-#          [ 0.0000,  0.0000,  0.0000],
-#          [ 0.7071,  0.0000,  0.0000]],
-
-#         [[ 0.0000,  0.7071,  0.0000],
-#          [-0.7071,  0.0000,  0.0000],
-#          [ 0.0000,  0.0000,  0.0000]]])),
-
-#  (2e, tp(op=(1o, 1o, 2e), args=(input(tensor=0, start=0, stop=3), input(tensor=1, start=0, stop=3))), tensor([[[ 0.0000,  0.0000,  0.7071],
-#          [ 0.0000,  0.0000,  0.0000],
-#          [ 0.7071,  0.0000,  0.0000]],
-
-#         [[ 0.0000,  0.7071,  0.0000],
-#          [ 0.7071,  0.0000,  0.0000],
-#          [ 0.0000,  0.0000,  0.0000]],
-
-#         [[-0.4082,  0.0000,  0.0000],
-#          [ 0.0000,  0.8165,  0.0000],
-#          [ 0.0000,  0.0000, -0.4082]],
-
-#         [[ 0.0000,  0.0000,  0.0000],
-#          [ 0.0000,  0.0000,  0.7071],
-#          [ 0.0000,  0.7071,  0.0000]],
-
-#         [[-0.7071,  0.0000,  0.0000],
-#          [ 0.0000,  0.0000,  0.0000],
-#          [ 0.0000,  0.0000,  0.7071]]]))]
-
-# >>> _wigner_nj(irreps['i'])
-# [(1o, input(tensor=0, start=0, stop=3), tensor([[1., 0., 0.],
-#         [0., 1., 0.],
-#         [0., 0., 1.]]))]
 
 function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
     irrepss = [o3.Irreps(irreps) for irreps in irrepss]
@@ -57,12 +14,18 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
         irreps = irrepss[1]
         ret = []
         i_dim = o3.dim(irreps)
-        e = [[convert(Float64, ndx1==ndx2) for ndx2 in 1:i_dim] for ndx1 in 1:i_dim]
+        # e = [[convert(Float64, ndx1==ndx2) for ndx2 in 1:i_dim] for ndx1 in 1:i_dim]
+        e = Array{Float64}(undef, i_dim, i_dim)
+        for ndx1 in 1:i_dim
+            for ndx2 in 1:i_dim
+                e[ndx1, ndx2] = convert(Float64, ndx1 == ndx2)
+            end
+        end
         i = 1
         for mul_ir in irreps
             for _ in 1:mul_ir.mul
-                stop = i + o3.dim(mul_ir.ir)
-                push!(ret, (mul_ir.ir, wigner.input(0, i, stop), e[i:stop-1])) # am I off by 1? we'll see
+                stop = i + o3.dim(mul_ir.ir) - 1
+                push!(ret, (mul_ir.ir, wigner.input(0, i, stop), e[i:stop, :]))
                 i += o3.dim(mul_ir.ir)
             end
         end
@@ -89,8 +52,10 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
                 end
 
                 ### begin einsum: C = einsum("jk,ijl->ikl", C_left.flatten(1), C)
-                C_left_flat = reshape(C_left, size(C_left)[1], :)
-                Clf_size = [size(C_left_flat)[1], length(C_left_flat[1])]
+                C_left_flat = reshape(C_left, size(C_left, 1), :)
+                s1 = [size(C_left_flat, 1), length(C_left_flat[1])] # temporary
+                s2 = size(C_left_flat) # temporary
+                Clf_size = size(C_left_flat)
                 C_size = size(C)
                 @assert Clf_size[1] == C_size[2]
                 C_prod = zeros(C_size[1], Clf_size[2], C_size[3])
@@ -99,7 +64,7 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
                         for ein_l in 1:C_size[3]
                             ein_total = 0
                             for ein_j in 1:C_size[2]
-                                ein_total += C_left_flat[ein_j][ein_k] * C[ein_i, ein_j, ein_l]
+                                ein_total += C_left_flat[ein_j, ein_k] * C[ein_i, ein_j, ein_l]
                             end
                             C_prod[ein_i, ein_k, ein_l] = ein_total
                         end
@@ -111,15 +76,17 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
                     E = zeros(o3.dim(ir_out), [o3.dim(irreps) for irreps in irrepss_left]..., o3.dim(irreps_right))
                     start = i + (u-1) * o3.dim(mul_ir.ir) + 1
                     stop = i + u * o3.dim(mul_ir.ir)
-                    E[:, start:stop] = C # how to account for that ellipsis? this current solution is not it
-                    ret += [(ir_out, tp((ir_left, mul_ir.ir, ir_out), (path_left, input(length(irrepss_left), start, stop))), E)]
+                    # access last dimension
+                    ndims = length(size(E))
+                    E[[1:d for d in size(E)[1:ndims-1]]..., start:stop] = C
+                    push!(ret, (ir_out, wigner.tp((ir_left, mul_ir.ir, ir_out), (path_left, wigner.input(length(irrepss_left), start, stop))), E))
                 end
             end
             i += mul_ir.mul * o3.dim(mul_ir.ir)
         end
     end
 
-    return sort(ret, by = x => x[1])
+    return sort(ret, by = x -> x[1])
 end
 
 function is_perm(p)
@@ -288,7 +255,7 @@ end
 #         [ 0.7071, -0.7071]]),
 # tensor([[ 0.7071,  0.0000],
 #         [-0.7071,  1.4142]]))
-function orthonormalize(original, epsilon = 1e-9)
+function orthonormalize(original, ε = 1e-9)
     """orthonomalize vectors
 
     Parameters
@@ -307,27 +274,27 @@ function orthonormalize(original, epsilon = 1e-9)
     matrix : `torch.Tensor`
         the matrix :math:`A` such that :math:`y = A x`
     """
-    @assert length(original) == 2
-    dim = length(original[1])
+    @assert ndims(original) == 2
+    dim = size(original, 2)
 
     final = []
     matrix = []
 
-    for (i, x) in enumerate(original)
-        # x = sum_i cx_i original_i
-        cx = zeros(length(original))
+    for i in 1:size(original, 1)
+        x = original[i, :]
+        cx = zeros(size(original, 1))
         cx[i] = 1
         for (j, y) in enumerate(final)
             c = sum(x .* y)
             x = x - c * y
             cx = cx - c * matrix[j]
         end
-        if norm(x) > 2 * epsilon
+        if norm(x) > 2 * ε
             c = 1 / norm(x)
             x = c * x
             cx = c * cx
-            x[findall(el -> abs(el) < epsilon, x)] .= 0
-            cx[findall(el -> abs(el) < epsilon, cx)] .= 0
+            x[findall(el -> abs(el) < ε, x)] .= 0
+            cx[findall(el -> abs(el) < ε, cx)] .= 0
             # x[map(abs, x) < eps] .= 0
             # cx[map(abs, cx) < eps] .= 0
             c = sign(x[findall(el -> el != 0, x)[1, 1]])
@@ -348,7 +315,7 @@ function orthonormalize(original, epsilon = 1e-9)
     return final, matrix
 end
 
-function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, epsilon=1e-9)
+function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9)
     if filter_ir_out !== nothing
         try
             filter_ir_out = [o3.Irrep(ir) for ir in filter_ir_out]
@@ -406,12 +373,16 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
         end
     end
 
-    base_perm, _ = reduce_permutation(f0, formulas, Dict(i => length(irs) for (i, irs) in irreps))
+    base_perm, _ = reduce_permutation(f0, formulas, Dict(i => o3.dim(irs) for (i, irs) in irreps))
 
     Ps = Dict()
 
+    # what exactly is going on here? i.e. why wigner
     for (ir, path, base_o3) in _wigner_nj([irreps[i] for i in f0]; filter_ir_mid=filter_ir_mid)
         if filter_ir_out === nothing || ir in filter_ir_out
+            if !(ir in keys(Ps))
+                Ps[ir] = []
+            end
             push!(Ps[ir], (path, base_o3))
         end
     end
@@ -420,50 +391,55 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
     change_of_basis = []
     irreps_out = []
 
-    P = base_perm.flatten(1)  # [permutation basis, input basis] (a,omega)
+    P = reshape(base_perm, size(base_perm, 1), :)  # [permutation basis, input basis] (a,omega)
     PP = P * transpose(P)  # (a,a)
-
-    for ir in Ps
+    
+    for ir in keys(Ps)
         mul = length(Ps[ir])
         paths = [path for (path, _) in Ps[ir]]
-        base_o3 = torch.stack([R for (_, R) in Ps[ir]])
+        base_o3 = cat([R for (_, R) in Ps[ir]]..., dims = ndims(Ps[ir][1][2])+1)
+        base_o3 = permutedims(base_o3, [ndims(base_o3), 1:ndims(base_o3)-1...])
+        # base_o3 = torch.stack([R for (_, R) in Ps[ir]]) # python
 
-        R = flatten(base_o3)  # [multiplicity, ir, input basis] (u,j,omega)
-        # R = base_o3.flatten()  # this is python
+        R = reshape(base_o3, size(base_o3, 1), size(base_o3, 2), :)  # [multiplicity, ir, input basis] (u,j,omega)
 
         proj_s = []  # list of projectors into vector space
-        for j in range(1, o3.dim(ir)) # pretty sure this isn't right
+        for j in range(1, o3.dim(ir))
             # Solve X @ R[:, j] = Y @ P, but keep only X
-            RR = R[:, j] * transpose(R[:, j])  # (u,u)
-            RP = R[:, j] * transpose(P)  # (u,a)
+            RR = R[:, j, :] * transpose(R[:, j, :])  # (u,u)
+            RP = R[:, j, :] * transpose(P)  # (u,a)
 
-            prob = torch.cat([
-                torch.cat([RR, -RP], dim=1),
-                torch.cat([-RP.T, PP], dim=1)
-            ], dim=0) # python
-            eigenvalues, eigenvectors = torch.linalg.eigh(prob)
-            X = transpose(eigenvectors[:, eigenvalues < epsilon][1:mul])  # [solutions, multiplicity]  # this doesn't work
-            push!(proj_s, transpose(X) * X)
+            prob = cat(cat(RR, -RP, dims=2), cat(transpose(-RP), PP, dims=2), dims=1)
+            eigenvalues, eigenvectors = eigen(prob)
+            eigvec_filtered = eigenvectors[:, map(λ -> λ < ε, eigenvalues)]
+            if length(eigvec_filtered) > 0
+                X = transpose(eigenvectors[:, map(λ -> λ < ε, eigenvalues)][1:mul])  # [solutions, multiplicity] # doesn't work if X is empty
+                push!(proj_s, transpose(X) * X)
+            else
+                push!(proj_s, [0.0;;])
+            end
 
             break  # do not check all components because too time expensive
         end
 
         for p in proj_s
-            if max(map(abs, p - proj_s[1])...) < epsilon
+            if max(map(abs, p - proj_s[1])...) > ε
                 println("found different solutions for irrep $ir")
                 throw(error())
             end
         end
 
-        # look for an X such that X.T @ X = Projector
-        X, _ = orthonormalize(proj_s[1], epsilon) # 1-indexed
+        # look for an X such that Xᵀ * X = Projector
+        X, _ = orthonormalize(proj_s[1], ε)
 
         for x in X
-            C = torch.einsum("u,ui...->i...", x, base_o3)
-            correction = (o3.dim(r) / sum(C.^2))^0.5
+            C = sum([x[ndx] .* base_o3[ndx, [1:sz for sz in size(base_o3)[2:ndims(base_o3)]]...] for ndx in 1:length(x)])
+            # C = torch.einsum("u,ui...->i...", x, base_o3)
+            correction = (o3.dim(ir) / sum(C.^2))^0.5
             C = correction * C
 
-            push!(outputs, [((correction * v).item(), p) for (v, p) in zip(x, paths) if abs(v) > epsilon])
+            # anyway correction * v is supposed to be just one number
+            push!(outputs, [(correction * v, p) for (v, p) in zip(x, paths) if abs(v) > ε])
             push!(change_of_basis, C)
             push!(irreps_out, (1, ir))
         end
