@@ -53,8 +53,6 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
 
                 ### begin einsum: C = einsum("jk,ijl->ikl", C_left.flatten(1), C)
                 C_left_flat = reshape(C_left, size(C_left, 1), :)
-                s1 = [size(C_left_flat, 1), length(C_left_flat[1])] # temporary
-                s2 = size(C_left_flat) # temporary
                 Clf_size = size(C_left_flat)
                 C_size = size(C)
                 @assert Clf_size[1] == C_size[2]
