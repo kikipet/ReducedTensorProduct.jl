@@ -49,7 +49,6 @@ function _so3_clebsch_gordan(l1, l2, l3)
     s2 = size(Q2)
     s3 = size(Q3)
     C_prod = zeros(s1[2], s2[2], s3[1])
-    # C_prod = zeros(ComplexF64, s1[2], s2[2], s3[1])
     for ein_j in 1:s1[2]
         for ein_l in 1:s2[2]
             for ein_m in 1:s3[1]
@@ -61,11 +60,7 @@ function _so3_clebsch_gordan(l1, l2, l3)
                         end
                     end
                 end
-                if abs(ein_total) < 1e-9
-                    C_prod[ein_j, ein_l, ein_m] = 0
-                else
-                    C_prod[ein_j, ein_l, ein_m] = ein_total
-                end
+                C_prod[ein_j, ein_l, ein_m] = ein_total
             end
         end
     end
@@ -110,14 +105,14 @@ function _su2_clebsch_gordan_coeff(idx1, idx2, idx3)
 
     function f(n)
         @assert n == round(n)
-        return convert(Float64, factorial(big(round(Int, n))))
+        return factorial(round(Int, n))
     end
 
-    C = sqrt((2 * j3 + 1) * f(j3 + j1 - j2) * f(j3 - j1 + j2) * f(j1 + j2 - j3) * f(j3 + m3) * f(j3 - m3) /  # noqa: W504
+    C = sqrt((2.0 * j3 + 1.0) * f(j3 + j1 - j2) * f(j3 - j1 + j2) * f(j1 + j2 - j3) * f(j3 + m3) * f(j3 - m3) /  # noqa: W504
                 (f(j1 + j2 + j3 + 1) * f(j1 - m1) * f(j1 + m1) * f(j2 - m2) * f(j2 + m2)))
     S = 0
     for v in vmin:vmax
-        S += (-1) ^ (v + j2 + m2) / f(v) * f(j2 + j3 + m1 - v) * f(j1 - m1 + v) / f(j3 - j1 + j2 - v) / f(j3 + m3 - v) / f(v + j1 - j2 - m3)
+        S += (-1.0) ^ (v + j2 + m2) / f(v) * f(j2 + j3 + m1 - v) * f(j1 - m1 + v) / f(j3 - j1 + j2 - v) / f(j3 + m3 - v) / f(v + j1 - j2 - m3)
     end
     C = C * S
     return C

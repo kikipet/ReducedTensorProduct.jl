@@ -3,6 +3,7 @@ using LinearAlgebra
 include("irreps.jl")
 include("wigner.jl")
 
+# this is the version before any parallelization!
 
 function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
     irrepss = [o3.Irreps(irreps) for irreps in irrepss]
@@ -25,7 +26,7 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
         for mul_ir in irreps
             for _ in 1:mul_ir.mul
                 stop = i + o3.dim(mul_ir.ir) - 1
-                push!(ret, (mul_ir.ir, wigner.input(1, i, stop), e[i:stop, :]))
+                push!(ret, (mul_ir.ir, wigner.input(0, i, stop), e[i:stop, :]))
                 i += o3.dim(mul_ir.ir)
             end
         end
@@ -77,7 +78,7 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
                     # access last dimension
                     ndims = length(size(E))
                     E[[1:d for d in size(E)[1:ndims-1]]..., start:stop] = C
-                    push!(ret, (ir_out, wigner.tp((ir_left, mul_ir.ir, ir_out), (path_left, wigner.input(length(irrepss_left)+1, start, stop))), E))
+                    push!(ret, (ir_out, wigner.tp((ir_left, mul_ir.ir, ir_out), (path_left, wigner.input(length(irrepss_left), start, stop))), E))
                 end
             end
             i += mul_ir.mul * o3.dim(mul_ir.ir)
@@ -287,7 +288,6 @@ function orthonormalize(original, ε = 1e-9)
             x = x - c * y
             cx = cx - c * matrix[j]
         end
-        k = norm(x)
         if norm(x) > 2 * ε
             c = 1 / norm(x)
             x = c * x
@@ -412,7 +412,7 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
             eigenvalues, eigenvectors = eigen(prob)
             eigvec_filtered = eigenvectors[:, map(λ -> λ < ε, eigenvalues)]
             if length(eigvec_filtered) > 0
-                X = transpose(eigenvectors[:, map(λ -> λ < ε, eigenvalues)][1:mul, :])  # [solutions, multiplicity] # doesn't work if X is empty
+                X = transpose(eigenvectors[:, map(λ -> λ < ε, eigenvalues)][1:mul])  # [solutions, multiplicity] # doesn't work if X is empty
                 push!(proj_s, transpose(X) * X)
             else
                 push!(proj_s, [0.0;;])
@@ -447,5 +447,5 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
     irreps_in = [irreps[i] for i in f0]
     irreps_out = o3.simplify(o3.Irreps(irreps_out))
 
-    return irreps_in, irreps_out, vcat([b for b in change_of_basis]...)
+    return irreps_in, irreps_out, change_of_basis
 end
