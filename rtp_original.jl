@@ -3,7 +3,6 @@ using LinearAlgebra
 include("irreps.jl")
 include("wigner.jl")
 
-# this is the version before any parallelization!
 
 function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
     irrepss = [o3.Irreps(irreps) for irreps in irrepss]
@@ -15,7 +14,6 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
         irreps = irrepss[1]
         ret = []
         i_dim = o3.dim(irreps)
-        # e = [[convert(Float64, ndx1==ndx2) for ndx2 in 1:i_dim] for ndx1 in 1:i_dim]
         e = Array{Float64}(undef, i_dim, i_dim)
         for ndx1 in 1:i_dim
             for ndx2 in 1:i_dim
@@ -26,7 +24,7 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
         for mul_ir in irreps
             for _ in 1:mul_ir.mul
                 stop = i + o3.dim(mul_ir.ir) - 1
-                push!(ret, (mul_ir.ir, wigner.input(0, i, stop), e[i:stop, :]))
+                push!(ret, (mul_ir.ir, wigner.input(1, i, stop), e[i:stop, :]))
                 i += o3.dim(mul_ir.ir)
             end
         end
@@ -78,7 +76,7 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
                     # access last dimension
                     ndims = length(size(E))
                     E[[1:d for d in size(E)[1:ndims-1]]..., start:stop] = C
-                    push!(ret, (ir_out, wigner.tp((ir_left, mul_ir.ir, ir_out), (path_left, wigner.input(length(irrepss_left), start, stop))), E))
+                    push!(ret, (ir_out, wigner.tp((ir_left, mul_ir.ir, ir_out), (path_left, wigner.input(length(irrepss_left)+1, start, stop))), E))
                 end
             end
             i += mul_ir.mul * o3.dim(mul_ir.ir)
@@ -288,14 +286,13 @@ function orthonormalize(original, ε = 1e-9)
             x = x - c * y
             cx = cx - c * matrix[j]
         end
+        k = norm(x)
         if norm(x) > 2 * ε
             c = 1 / norm(x)
             x = c * x
             cx = c * cx
             x[findall(el -> abs(el) < ε, x)] .= 0
             cx[findall(el -> abs(el) < ε, cx)] .= 0
-            # x[map(abs, x) < eps] .= 0
-            # cx[map(abs, cx) < eps] .= 0
             c = sign(x[findall(el -> el != 0, x)[1, 1]])
             x = c * x
             cx = c * cx
@@ -376,7 +373,6 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
 
     Ps = Dict()
 
-    # what exactly is going on here? i.e. why wigner
     for (ir, path, base_o3) in _wigner_nj([irreps[i] for i in f0]; filter_ir_mid=filter_ir_mid)
         if filter_ir_out === nothing || ir in filter_ir_out
             if !(ir in keys(Ps))
@@ -398,7 +394,6 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
         paths = [path for (path, _) in Ps[ir]]
         base_o3 = cat([R for (_, R) in Ps[ir]]..., dims = ndims(Ps[ir][1][2])+1)
         base_o3 = permutedims(base_o3, [ndims(base_o3), 1:ndims(base_o3)-1...])
-        # base_o3 = torch.stack([R for (_, R) in Ps[ir]]) # python
 
         R = reshape(base_o3, size(base_o3, 1), size(base_o3, 2), :)  # [multiplicity, ir, input basis] (u,j,omega)
 
@@ -412,7 +407,7 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
             eigenvalues, eigenvectors = eigen(prob)
             eigvec_filtered = eigenvectors[:, map(λ -> λ < ε, eigenvalues)]
             if length(eigvec_filtered) > 0
-                X = transpose(eigenvectors[:, map(λ -> λ < ε, eigenvalues)][1:mul])  # [solutions, multiplicity] # doesn't work if X is empty
+                X = transpose(eigenvectors[:, map(λ -> λ < ε, eigenvalues)][1:mul, :])  # [solutions, multiplicity] # doesn't work if X is empty
                 push!(proj_s, transpose(X) * X)
             else
                 push!(proj_s, [0.0;;])
@@ -447,5 +442,5 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
     irreps_in = [irreps[i] for i in f0]
     irreps_out = o3.simplify(o3.Irreps(irreps_out))
 
-    return irreps_in, irreps_out, change_of_basis
+    return irreps_in, irreps_out, vcat([b for b in change_of_basis]...)
 end

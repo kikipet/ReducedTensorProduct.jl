@@ -14,7 +14,6 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
         irreps = irrepss[1]
         ret = []
         i_dim = o3.dim(irreps)
-        # e = [[convert(Float64, ndx1==ndx2) for ndx2 in 1:i_dim] for ndx1 in 1:i_dim]
         e = Array{Float64}(undef, i_dim, i_dim)
         for ndx1 in 1:i_dim
             for ndx2 in 1:i_dim
@@ -294,8 +293,6 @@ function orthonormalize(original, ε = 1e-9)
             cx = c * cx
             x[findall(el -> abs(el) < ε, x)] .= 0
             cx[findall(el -> abs(el) < ε, cx)] .= 0
-            # x[map(abs, x) < eps] .= 0
-            # cx[map(abs, cx) < eps] .= 0
             c = sign(x[findall(el -> el != 0, x)[1, 1]])
             x = c * x
             cx = c * cx
@@ -376,7 +373,6 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
 
     Ps = Dict()
 
-    # what exactly is going on here? i.e. why wigner
     for (ir, path, base_o3) in _wigner_nj([irreps[i] for i in f0]; filter_ir_mid=filter_ir_mid)
         if filter_ir_out === nothing || ir in filter_ir_out
             if !(ir in keys(Ps))
@@ -398,7 +394,6 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
         paths = [path for (path, _) in Ps[ir]]
         base_o3 = cat([R for (_, R) in Ps[ir]]..., dims = ndims(Ps[ir][1][2])+1)
         base_o3 = permutedims(base_o3, [ndims(base_o3), 1:ndims(base_o3)-1...])
-        # base_o3 = torch.stack([R for (_, R) in Ps[ir]]) # python
 
         R = reshape(base_o3, size(base_o3, 1), size(base_o3, 2), :)  # [multiplicity, ir, input basis] (u,j,omega)
 
