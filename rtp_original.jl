@@ -1,3 +1,5 @@
+module ReducedTensorProduct
+
 using IterTools
 using LinearAlgebra
 include("irreps.jl")
@@ -24,7 +26,7 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
         for mul_ir in irreps
             for _ in 1:mul_ir.mul
                 stop = i + o3.dim(mul_ir.ir) - 1
-                push!(ret, (mul_ir.ir, wigner.input(1, i, stop), e[i:stop, :]))
+                push!(ret, (mul_ir.ir, Wigner.Input(1, i, stop), e[i:stop, :]))
                 i += o3.dim(mul_ir.ir)
             end
         end
@@ -42,7 +44,7 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
                     continue
                 end
 
-                C = wigner.wigner_3j(ir_out.l, ir_left.l, mul_ir.ir.l)
+                C = Wigner.wigner_3j(ir_out.l, ir_left.l, mul_ir.ir.l)
                 if normalization == "component"
                     C *= o3.dim(ir_out)^0.5
                 end
@@ -76,7 +78,7 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
                     # access last dimension
                     ndims = length(size(E))
                     E[[1:d for d in size(E)[1:ndims-1]]..., start:stop] = C
-                    push!(ret, (ir_out, wigner.tp((ir_left, mul_ir.ir, ir_out), (path_left, wigner.input(length(irrepss_left)+1, start, stop))), E))
+                    push!(ret, (ir_out, Wigner.TP((ir_left, mul_ir.ir, ir_out), (path_left, Wigner.Input(length(irrepss_left)+1, start, stop))), E))
                 end
             end
             i += mul_ir.mul * o3.dim(mul_ir.ir)
@@ -134,12 +136,10 @@ function germinate_formulas(formula)
     formula_set = Set()
     for (s, f) in formulas
         if length(Set(f)) != length(f) || Set(f) != Set(f0)
-            println("$f is not a permutation of $f0")
-            throw(error())
+            throw(error("$f is not a permutation of $f0"))
         end
         if length(f0) != length(f)
-            println("$f0 and $f don't have the same number of indices")
-            throw(error())
+            throw(error("$f0 and $f don't have the same number of indices"))
         end
         indices = (findfirst(isequal(i), f) for i in f0)
         push!(formula_set, (s, vcat(indices...)))
@@ -180,8 +180,7 @@ function reduce_permutation(f0, formulas, dims)
         f = string([f0[i] for i in p]...)
         for (i, j) in zip(f0, f)
             if i in keys(dims) && j in keys(dims) && dims[i] != dims[j]
-                println("dimension of $i and $j should be the same")
-                throw(error())
+                throw(error("dimension of $i and $j should be the same"))
             end
             if i in keys(dims)
                 dims[j] = dims[i]
@@ -193,14 +192,13 @@ function reduce_permutation(f0, formulas, dims)
     end
     for i in f0
         if !(i in keys(dims))
-            println("index $i has no dimension associated to it")
-            throw(error())
+            throw(error("index $i has no dimension associated to it"))
         end
     end
 
     dims = [dims[i] for i in f0]
 
-    full_base = product([1:d for d in dims]...)  # (0, 0, 0), (0, 0, 1), (0, 0, 2), ... (3, 3, 3)
+    full_base = product([1:d for d in dims]...)  # (0, 0, 0), (0, 0, 1), (0, 0, 2), ... (d1, d2, d3)
     # len(full_base) degrees of freedom in an unconstrained tensor
 
     # but there is constraints given by the group `formulas`
@@ -286,7 +284,6 @@ function orthonormalize(original, ε = 1e-9)
             x = x - c * y
             cx = cx - c * matrix[j]
         end
-        k = norm(x)
         if norm(x) > 2 * ε
             c = 1 / norm(x)
             x = c * x
@@ -316,35 +313,31 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
         try
             filter_ir_out = [o3.Irrep(ir) for ir in filter_ir_out]
         catch
-            println("filter_ir_out (=$filter_ir_out) must be an iterable of Irrep")
-            throw(error())
+            throw(error("filter_ir_out (=$filter_ir_out) must be an iterable of Irrep"))
         end
     end
     if filter_ir_mid !== nothing
         try
             filter_ir_mid = [o3.Irrep(ir) for ir in filter_ir_mid]
         catch
-            println("filter_ir_mid (=$filter_ir_mid) must be an iterable of Irrep")
-            throw(error())
+            throw(error("filter_ir_mid (=$filter_ir_mid) must be an iterable of Irrep"))
         end
     end
     
-    f0, formulas = germinate_formulas(formula)
+    f0, formulas = germinate_formulas(formula) # create representations for all equivalent index permutations
 
+    # check for invalid index names
     irreps = Dict(i => o3.Irreps(irs) for (i, irs) in irreps) # keys: char; values: Irreps
-
     for i in keys(irreps)
         if length(i) != 1
-            println("got an unexpected keyword argument '$i'")
-            throw(error())
+            throw(error("got an unexpected keyword argument '$i'"))
         end
     end
-
     for (sign, p) in formulas
         f = join([f0[i] for i in p])
         for (i, j) in zip(f0, f)
             if i in keys(irreps) && j in keys(irreps) && irreps[i] != irreps[j]
-                throw(RuntimeError("irreps of $i and $j should be the same"))
+                throw(error("irreps of $i and $j should be the same"))
             end
             if i in keys(irreps)
                 irreps[j] = irreps[i]
@@ -354,22 +347,19 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
             end
         end
     end
-
     for i in f0
         if !(i in keys(irreps))
-            println("index $i has no irreps associated to it")
-            throw(error())
+            throw(error("index $i has no irreps associated to it"))
         end
     end
-
     for i in keys(irreps)
         if !(i in f0)
-            println("index $i has an irreps but does not appear in the fomula")
-            throw(error())
+            throw(error("index $i has an irreps but does not appear in the fomula"))
         end
     end
 
-    base_perm, _ = reduce_permutation(f0, formulas, Dict(i => o3.dim(irs) for (i, irs) in irreps))
+    # permutation basis
+    base_perm, _ = reduce_permutation(f0, formulas, Dict(i => o3.dim(irs) for (i, irs) in irreps)) # same size as output
 
     Ps = Dict()
 
@@ -378,11 +368,11 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
             if !(ir in keys(Ps))
                 Ps[ir] = []
             end
-            push!(Ps[ir], (path, base_o3))
+            push!(Ps[ir], (path, base_o3)) ##### this has got to take up a lot of space #####
         end
     end
 
-    outputs = []
+    # outputs = []
     change_of_basis = []
     irreps_out = []
 
@@ -391,15 +381,21 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
     
     for ir in keys(Ps)
         mul = length(Ps[ir])
-        paths = [path for (path, _) in Ps[ir]]
-        base_o3 = cat([R for (_, R) in Ps[ir]]..., dims = ndims(Ps[ir][1][2])+1)
+        paths = []
+        base_o3 = []
+        for (path, R) in Ps[ir]
+            push!(paths, path)
+            push!(base_o3, R)
+        end
+        # base_o3/R == clebsch-gordan basis
+        base_o3 = cat(base_o3..., dims = ndims(Ps[ir][1][2])+1)
         base_o3 = permutedims(base_o3, [ndims(base_o3), 1:ndims(base_o3)-1...])
 
         R = reshape(base_o3, size(base_o3, 1), size(base_o3, 2), :)  # [multiplicity, ir, input basis] (u,j,omega)
 
         proj_s = []  # list of projectors into vector space
-        for j in range(1, o3.dim(ir))
-            # Solve X @ R[:, j] = Y @ P, but keep only X
+        for j in range(1, o3.dim(ir)) ##### this seems pretty parallelizable? #####
+            ### Solve X @ R[:, j] = Y @ P, but keep only X
             RR = R[:, j, :] * transpose(R[:, j, :])  # (u,u)
             RP = R[:, j, :] * transpose(P)  # (u,a)
 
@@ -407,8 +403,8 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
             eigenvalues, eigenvectors = eigen(prob)
             eigvec_filtered = eigenvectors[:, map(λ -> λ < ε, eigenvalues)]
             if length(eigvec_filtered) > 0
-                X = transpose(eigenvectors[:, map(λ -> λ < ε, eigenvalues)][1:mul, :])  # [solutions, multiplicity] # doesn't work if X is empty
-                push!(proj_s, transpose(X) * X)
+                X = eigenvectors[:, map(λ -> λ < ε, eigenvalues)][1:mul, :]  # [solutions, multiplicity] # doesn't work if X is empty
+                push!(proj_s, X * transpose(X))
             else
                 push!(proj_s, [0.0;;])
             end
@@ -418,8 +414,7 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
 
         for p in proj_s
             if max(map(abs, p - proj_s[1])...) > ε
-                println("found different solutions for irrep $ir")
-                throw(error())
+                throw(error("found different solutions for irrep $ir"))
             end
         end
 
@@ -433,7 +428,7 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
             C = correction * C
 
             # anyway correction * v is supposed to be just one number
-            push!(outputs, [(correction * v, p) for (v, p) in zip(x, paths) if abs(v) > ε])
+            # push!(outputs, [(correction * v, p) for (v, p) in zip(x, paths) if abs(v) > ε])
             push!(change_of_basis, C)
             push!(irreps_out, (1, ir))
         end
@@ -441,6 +436,12 @@ function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_i
 
     irreps_in = [irreps[i] for i in f0]
     irreps_out = o3.simplify(o3.Irreps(irreps_out))
+    change_of_basis = vcat(change_of_basis...)
 
-    return irreps_in, irreps_out, vcat([b for b in change_of_basis]...)
+    return irreps_in, irreps_out, change_of_basis
+
+end
+
+export reduced_tensor_product
+
 end

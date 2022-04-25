@@ -1,13 +1,13 @@
-module wigner
+module Wigner
 
 using LinearAlgebra
 
-struct tp
+struct TP
     op::Tuple
     args::Tuple
 end
 
-struct input
+struct Input
     # start and stop are both inclusive
     tensor::Int
     start::Int
@@ -38,7 +38,7 @@ function wigner_3j(l1, l2, l3)
     return C
 end
 
-function _so3_clebsch_gordan(l1, l2, l3)
+function _so3_clebsch_gordan(l1, l2, l3) ## this is called clebsch_gordan in e3nn_jax
     Q1 = change_basis_real_to_complex(l1)
     Q2 = change_basis_real_to_complex(l2)
     Q3 = change_basis_real_to_complex(l3)
@@ -125,10 +125,10 @@ end
 
 
 function _get_ops(path)
-    if typeof(path) == input
+    if typeof(path) == Input
         return
     end
-    @assert typeof(path) == tp
+    @assert typeof(path) == TP
     ops = []
     push!(ops, path.op)
     for op in _get_ops(path.args[1])
@@ -137,5 +137,5 @@ function _get_ops(path)
     return ops
 end
 
-export tp, input, wigner_3j, _get_ops
+export TP, Input, wigner_3j, _get_ops
 end
