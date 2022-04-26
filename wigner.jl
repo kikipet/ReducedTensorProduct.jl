@@ -1,6 +1,7 @@
 module Wigner
 
 using LinearAlgebra
+using Einsum
 
 struct TP
     op::Tuple
@@ -44,32 +45,10 @@ function _so3_clebsch_gordan(l1, l2, l3) ## this is called clebsch_gordan in e3n
     Q3 = change_basis_real_to_complex(l3)
     Q3 = conj(transpose(Q3))
     C = _su2_clebsch_gordan(l1, l2, l3)
-    ### begin einsum: C = einsum('ij,kl,mn,ikn->jlm', Q1, Q2, Q3, C)
-    s1 = size(Q1)
-    s2 = size(Q2)
-    s3 = size(Q3)
-    C_prod = zeros(s1[2], s2[2], s3[1])
-    # C_prod = zeros(ComplexF64, s1[2], s2[2], s3[1])
-    for ein_j in 1:s1[2]
-        for ein_l in 1:s2[2]
-            for ein_m in 1:s3[1]
-                ein_total = 0
-                for ein_i in 1:s1[1]
-                    for ein_k in 1:s2[1]
-                        for ein_n in 1:s3[2]
-                            ein_total += Q1[ein_i, ein_j] * Q2[ein_k, ein_l] * Q3[ein_m, ein_n] * C[ein_i, ein_k, ein_n]
-                        end
-                    end
-                end
-                if abs(ein_total) < 1e-9
-                    C_prod[ein_j, ein_l, ein_m] = 0
-                else
-                    C_prod[ein_j, ein_l, ein_m] = ein_total
-                end
-            end
-        end
-    end
-    ### end einsum
+
+
+    # C = einsum('ij,kl,mn,ikn->jlm', Q1, Q2, Q3, C)
+    @einsum C_prod[j, l, m] := Q1[i, j] * Q2[k, l] * Q3[m, n] * C[i, k, n]
 
     # make it real
     @assert all(map(c -> abs(imag(c)) < 1e-5, C_prod))

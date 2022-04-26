@@ -2,6 +2,7 @@ module ReducedTensorProduct
 
 using IterTools
 using LinearAlgebra
+using Einsum
 include("irreps.jl")
 include("wigner.jl")
 
@@ -35,6 +36,7 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
 
     irreps_right = irrepss[length(irrepss)]
     irrepss_left = irrepss[1:length(irrepss)-1]
+    irrep_left_dims = [o3.dim(irreps) for irreps in irrepss_left]
     ret = []
     for (ir_left, path_left, C_left) in _wigner_nj(irrepss_left, normalization=normalization, filter_ir_mid=filter_ir_mid)
         i = 0
@@ -52,27 +54,12 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
                     C *= o3.dim(ir_left)^0.5 * o3.dim(mul_ir.ir)^0.5
                 end
 
-                ### begin einsum: C = einsum("jk,ijl->ikl", C_left.flatten(1), C)
+                # C = einsum("jk,ijl->ikl", C_left.flatten(1), C)
                 C_left_flat = reshape(C_left, size(C_left, 1), :)
-                Clf_size = size(C_left_flat)
-                C_size = size(C)
-                @assert Clf_size[1] == C_size[2]
-                C_prod = zeros(C_size[1], Clf_size[2], C_size[3])
-                for ein_k in 1:Clf_size[2]
-                    for ein_i in 1:C_size[1]
-                        for ein_l in 1:C_size[3]
-                            ein_total = 0
-                            for ein_j in 1:C_size[2]
-                                ein_total += C_left_flat[ein_j, ein_k] * C[ein_i, ein_j, ein_l]
-                            end
-                            C_prod[ein_i, ein_k, ein_l] = ein_total
-                        end
-                    end
-                end
-                ### end einsum
-                C = reshape(C_prod, o3.dim(ir_out), [o3.dim(irreps) for irreps in irrepss_left]..., o3.dim(mul_ir.ir))
+                @einsum C_prod[i, k, l] := C_left_flat[j, k] * C[i, j, l]
+                C = reshape(C_prod, o3.dim(ir_out), irrep_left_dims..., o3.dim(mul_ir.ir))
                 for u in 1:mul_ir.mul
-                    E = zeros(o3.dim(ir_out), [o3.dim(irreps) for irreps in irrepss_left]..., o3.dim(irreps_right))
+                    E = zeros(o3.dim(ir_out), irrep_left_dims..., o3.dim(irreps_right))
                     start = i + (u-1) * o3.dim(mul_ir.ir) + 1
                     stop = i + u * o3.dim(mul_ir.ir)
                     # access last dimension
