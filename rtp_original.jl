@@ -296,6 +296,7 @@ function orthonormalize(original, ε = 1e-9)
 end
 
 function reduced_tensor_product(formula, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9)
+    """Original version; serial, no optimizations"""
     if filter_ir_out !== nothing
         try
             filter_ir_out = [o3.Irrep(ir) for ir in filter_ir_out]
