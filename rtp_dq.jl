@@ -321,7 +321,7 @@ function find_R(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
 	# irreps_out = []
 	k1 = 1
 	for mul_ir1 in irreps1
-		sub_Q1 = Q1[k1:k1 + o3.dim(mul_ir1) - 1, [1:size(Q1, d) for d in 2:ndims(Q1)]...] # ??? dimensions???
+		sub_Q1 = Q1[k1:k1 + o3.dim(mul_ir1) - 1, [1:size(Q1, d) for d in 2:ndims(Q1)]...]
 		sub_Q1 = reshape(sub_Q1, mul_ir1.mul, o3.dim(mul_ir1.ir), :)
 		k1 += o3.dim(mul_ir1)
 		k2 = 1
@@ -337,7 +337,13 @@ function find_R(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
                     if !(ir_out in keys(Rs))
                         Rs[ir_out] = []
                     end
-                    push!(Rs[ir_out], C)
+                    # push!(Rs[ir_out], C)
+                    # not sure if this is legit
+                    for i in 1:size(C, 1)
+                        for j in 1:size(C, 2)
+                            push!(Rs[ir_out], reshape(C[i, j, :, :, :], size(C, 3), [size(Q1, d) for d in 2:ndims(Q1)]..., [size(Q2, d) for d in 2:ndims(Q2)]...)) # ?? dimensions?
+                        end
+                    end
                 end
             end
         end
@@ -416,15 +422,14 @@ function find_Q(P, Rs, ε=1e-9)
     PP = P * transpose(P)  # (a,a)
     
     for ir in keys(Rs)
+        mul = length(Rs[ir])
         base_o3 = []
         for R in Rs[ir]
             push!(base_o3, R)
         end
         # base_o3/R == clebsch-gordan basis
         base_o3 = cat(base_o3..., dims = ndims(Rs[ir][1])+1)
-        mul = size(base_o3, 1) * size(base_o3, 2)
-        base_o3 = reshape(base_o3, mul, size(base_o3, 3), size(base_o3, 4), size(base_o3, 5))
-        # base_o3 = permutedims(base_o3, [ndims(base_o3), 1:ndims(base_o3)-1...])
+        base_o3 = permutedims(base_o3, [ndims(base_o3), 1:ndims(base_o3)-1...])
 
         R = reshape(base_o3, size(base_o3, 1), size(base_o3, 2), :)  # [multiplicity, ir, input basis] (u,j,omega)
 
@@ -462,7 +467,6 @@ function find_Q(P, Rs, ε=1e-9)
             correction = (o3.dim(ir) / sum(C.^2))^0.5
             C = correction * C
 
-            # anyway correction * v is supposed to be just one number
             push!(Q, C)
             push!(irreps_out, (1, ir))
         end
@@ -691,7 +695,7 @@ function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=noth
     ### find optimal subformulas
     best_subindices = nothing
     D_curr = 1e7
-    sizes = [(0,0), (0,0)] # sizes of out1 and out2 down below
+    # sizes = [(0,0), (0,0)] # sizes of out1 and out2 down below
     for subindices in subsets(1:length(f0))
         if length(subindices) > 0 && length(subindices) < length(f0)
             f1 = f0[subindices]
@@ -702,8 +706,8 @@ function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=noth
             P2 = find_P(f2, formulas2, Dict(i => o3.dim(irreps[i]) for i in f2))
             if prod(size(P1)) * prod(size(P2)) < D_curr
                 D_curr = prod(size(P1)) * prod(size(P2))
-                sizes[1] = size(P1)
-                sizes[2] = size(P2)
+                # sizes[1] = size(P1)
+                # sizes[2] = size(P2)
                 best_subindices = subindices[:]
             end
         end
