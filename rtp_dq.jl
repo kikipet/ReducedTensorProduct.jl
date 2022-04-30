@@ -316,7 +316,41 @@ function find_R_old(irreps, filter_ir_mid=nothing, filter_ir_out=nothing)
     return Rs
 end
 
-function find_Q(P, Rs, ε=1e-9)
+function find_R(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
+	Rs = Dict() # dictionary of irreps -> matrix
+	# irreps_out = []
+	k1 = 1
+	for mul_ir1 in irreps1
+		sub_Q1 = Q1[k1:k1 + o3.dim(mul_ir1) - 1, [1:size(Q1, d) for d in 2:ndims(Q1)]...] # ??? dimensions???
+		sub_Q1 = reshape(sub_Q1, mul_ir1.mul, o3.dim(mul_ir1.ir), :)
+		k1 += o3.dim(mul_ir1)
+		k2 = 1
+		for mul_ir2 in irreps2
+			sub_Q2 = Q2[k2:k2 + o3.dim(mul_ir2) - 1, [1:size(Q2, d) for d in 2:ndims(Q2)]...]
+			sub_Q2 = reshape(sub_Q2, mul_ir2.mul, o3.dim(mul_ir2.ir), :)
+			k2 += o3.dim(mul_ir2)
+			for ir_out in mul_ir1.ir * mul_ir2.ir
+				# push!(irreps_out, o3.MulIr(mul_ir1.mul * mul_ir2.mul, ir_out))
+                cg = Wigner.wigner_3j(mul_ir1.ir.l, mul_ir2.ir.l, ir_out.l)
+                @einsum C[m, n, k, a, b] := sub_Q1[m, i, a] * sub_Q2[n, j, b] * cg[i, j, k]
+                for _ in 1:mul_ir1.mul * mul_ir2.mul
+                    if filter_ir_out === nothing || ir_out in filter_ir_out
+                        if !(ir_out in keys(Rs))
+                            Rs[ir_out] = []
+                        end
+                        push!(Rs[ir_out], C)
+                    end
+                end
+            end
+        end
+    end
+	# Rs = concat Rs into a matrix
+	# irreps_out = o3.Irreps(irreps_out)
+	# return irreps_out, Rs
+    return Rs
+end
+
+function find_Q_old(P, Rs, ε=1e-9)
     Q = []
     irreps_out = []
 
@@ -331,6 +365,70 @@ function find_Q(P, Rs, ε=1e-9)
         # base_o3/R == clebsch-gordan basis
         base_o3 = cat(base_o3..., dims = ndims(Rs[ir][1])+1)
         base_o3 = permutedims(base_o3, [ndims(base_o3), 1:ndims(base_o3)-1...])
+
+        R = reshape(base_o3, size(base_o3, 1), size(base_o3, 2), :)  # [multiplicity, ir, input basis] (u,j,omega) 
+
+        proj_s = []  # list of projectors into vector space
+        for j in range(1, o3.dim(ir))
+            ### Solve X @ R[:, j] = Y @ P, but keep only X
+            RR = R[:, j, :] * transpose(R[:, j, :])  # (u,u)
+            RP = R[:, j, :] * transpose(P)  # (u,a)
+
+            prob = cat(cat(RR, -RP, dims=2), cat(transpose(-RP), PP, dims=2), dims=1)
+            eigenvalues, eigenvectors = eigen(prob)
+            eigvec_filtered = eigenvectors[:, map(λ -> λ < ε, eigenvalues)]
+            if length(eigvec_filtered) > 0
+                X = eigenvectors[:, map(λ -> λ < ε, eigenvalues)][1:mul, :]  # [solutions, multiplicity]
+                push!(proj_s, X * transpose(X))
+            else
+                push!(proj_s, [0.0;;])
+            end
+
+            break  # do not check all components because too time expensive
+        end
+
+        for p in proj_s
+            if max(map(abs, p - proj_s[1])...) > ε
+                throw(error("found different solutions for irrep $ir"))
+            end
+        end
+
+        # look for an X such that Xᵀ * X = Projector
+        X, _ = orthonormalize(proj_s[1], ε)
+
+        for x in X
+            C = sum([x[ndx] .* base_o3[ndx, [1:sz for sz in size(base_o3)[2:ndims(base_o3)]]...] for ndx in 1:length(x)])
+            # C = torch.einsum("u,ui...->i...", x, base_o3)
+            correction = (o3.dim(ir) / sum(C.^2))^0.5
+            C = correction * C
+
+            # anyway correction * v is supposed to be just one number
+            push!(Q, C)
+            push!(irreps_out, (1, ir))
+        end
+    end
+
+    irreps_out = o3.simplify(o3.Irreps(irreps_out))
+    Q = vcat(Q...)
+    return irreps_out, Q
+end
+
+function find_Q(P, Rs, ε=1e-9)
+    Q = []
+    irreps_out = []
+
+    PP = P * transpose(P)  # (a,a)
+    
+    for ir in keys(Rs)
+        mul = length(Rs[ir])
+        base_o3 = []
+        for R in Rs[ir]
+            push!(base_o3, R)
+        end
+        # base_o3/R == clebsch-gordan basis
+        base_o3 = cat(base_o3..., dims = ndims(Rs[ir][1])+1)
+        base_o3 = reshape(base_o3, size(base_o3, 1) * size(base_o3, 2), size(base_o3, 3), size(base_o3, 4), size(base_o3, 5))
+        # base_o3 = permutedims(base_o3, [ndims(base_o3), 1:ndims(base_o3)-1...])
 
         R = reshape(base_o3, size(base_o3, 1), size(base_o3, 2), :)  # [multiplicity, ir, input basis] (u,j,omega)
 
@@ -434,10 +532,10 @@ function reduced_product(formula, irreps, filter_ir_out=nothing, filter_ir_mid=n
     base_perm = find_P(f0, formulas, Dict(i => o3.dim(irs) for (i, irs) in irreps)) # same size as output
     P = reshape(base_perm, size(base_perm, 1), :)  # [permutation basis, input basis] (a,omega)
     # rotation basis
-    Rs = find_R([irreps[i] for i in f0], filter_ir_mid, filter_ir_out)
+    Rs = find_R_old([irreps[i] for i in f0], filter_ir_mid, filter_ir_out)
 
     irreps_in = [irreps[i] for i in f0]
-    irreps_out, change_of_basis = find_Q(P, Rs)
+    irreps_out, change_of_basis = find_Q_old(P, Rs)
 
     return irreps_in, irreps_out, change_of_basis
 end
@@ -464,14 +562,11 @@ function reduced_product_one(formula, irreps, filter_ir_out=nothing, filter_ir_m
     return _rtp_one(f0, formulas, irreps, filter_ir_out, filter_ir_mid)
 end
 
-function _rtp_one(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9, is_subproblem=false)
+function _rtp_one(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9)
     """divide and conquer - remove 1 index at a time"""
     # base case
     if length(f0) == 1
         ir = o3.Irreps(irreps[only(f0)])
-        if is_subproblem
-            return o3.Irreps(ir)
-        end
         return o3.Irreps(ir), o3.Irreps(ir), I(o3.dim(ir))
     end
     # set irrep indices
@@ -522,7 +617,7 @@ function _rtp_one(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=not
     in2, out2, Q2 = _rtp_one(f2, formulas2, Dict(c => irreps[c] for c in f2), filter_ir_out, filter_ir_mid, ε)
 
     ### combine Q1 and Q2
-    Q_comb = find_R([out1, out2], filter_ir_mid, filter_ir_out)
+    Q_comb = find_R(out1, out2, Q1, Q2, filter_ir_out)
 
     ### if all symmetries are already accounted for, find_Q isn't necessary
     # if union(Set(formulas1), Set(formulas2)) == Set(formulas)
@@ -533,9 +628,6 @@ function _rtp_one(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=not
     irreps_in = [irreps[i] for i in f0]
     irreps_out, Q = find_Q(P, Q_comb)
 
-    if is_subproblem
-        return irreps_out
-    end
     return irreps_in, irreps_out, Q
 end
 
@@ -561,14 +653,11 @@ function reduced_product_dq(formula, irreps, filter_ir_out=nothing, filter_ir_mi
     return _rtp_dq(f0, formulas, irreps, filter_ir_out, filter_ir_mid)
 end
 
-function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9, is_subproblem=false) # for caching, f0 => len(f0), irreps => list
+function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9) # for caching, f0 => len(f0), irreps => list
     """divide and conquer - remove 1 index at a time"""
     # base case
     if length(f0) == 1
         ir = o3.Irreps(irreps[only(f0)])
-        if is_subproblem
-            return o3.Irreps(ir)
-        end
         return o3.Irreps(ir), o3.Irreps(ir), I(o3.dim(ir))
     end
     # set irrep indices
@@ -634,11 +723,11 @@ function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=noth
     P = reshape(base_perm, size(base_perm, 1), :)  # [permutation basis, input basis] (a,omega)
 
     ### Qs from subproblems (irrep outputs)
-    out1 = _rtp_dq(f1, formulas1, Dict(c => irreps[c] for c in f1), filter_ir_out, filter_ir_mid, ε, true) # give these irreps_out a certain block of memory (~1KB or something)
-    out2 = _rtp_dq(f2, formulas2, Dict(c => irreps[c] for c in f2), filter_ir_out, filter_ir_mid, ε, true)
+    in1, out1, Q1 = _rtp_dq(f1, formulas1, Dict(c => irreps[c] for c in f1), filter_ir_out, filter_ir_mid, ε) # give these irreps_out a certain block of memory (~1KB or something)
+    in2, out2, Q2 = _rtp_dq(f2, formulas2, Dict(c => irreps[c] for c in f2), filter_ir_out, filter_ir_mid, ε)
 
     ### combine Q1 and Q2
-    Q_comb = find_R([out1, out2], filter_ir_mid, filter_ir_out)
+    Q_comb = find_R(out1, out2, Q1, Q2, filter_ir_out)
 
     irreps_in = [irreps[i] for i in f0]
     
@@ -646,18 +735,12 @@ function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=noth
     # if union(Set(formulas1_orig), Set(formulas2_orig)) == Set(formulas)
     #     println("asdf")
     #     irreps_out = o3.simplify(o3.Irreps([out1, out2]))
-    #     if is_subproblem
-    #         return irreps_out
-    #     end
     #     return irreps_in, irreps_out, Q_comb
     # end
 
     ### otherwise, take extra global symmetries into account
     irreps_out, Q = find_Q(P, Q_comb)
 
-    if is_subproblem
-        return irreps_out
-    end
     return irreps_in, irreps_out, Q
 end
 

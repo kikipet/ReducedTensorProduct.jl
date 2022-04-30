@@ -56,6 +56,11 @@ function dim(I::Irrep)
     return 2 * I.l + 1
 end
 
+function dim(I::MulIr)
+    """Calculates dimension of a multiple irrep."""
+    return I.mul * dim(I.ir)
+end
+
 function dim(I::Irreps)
     """Calculates dimension of a direct sum of irreps."""
     d = 0
