@@ -32,7 +32,7 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
         for mul_ir in irreps
             for _ in 1:mul_ir.mul
                 stop = i + o3.dim(mul_ir.ir) - 1
-                push!(ret, (mul_ir.ir, Wigner.Input(1, i, stop), e[i:stop, :]))
+                push!(ret, (mul_ir.ir, e[i:stop, :]))
                 i += o3.dim(mul_ir.ir)
             end
         end
@@ -43,7 +43,7 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
     irrepss_left = irrepss[1:length(irrepss)-1]
     irrep_left_dims = [o3.dim(irreps) for irreps in irrepss_left]
     ret = []
-    for (ir_left, path_left, C_left) in _wigner_nj(irrepss_left, normalization=normalization, filter_ir_mid=filter_ir_mid)
+    for (ir_left, C_left) in _wigner_nj(irrepss_left, normalization=normalization, filter_ir_mid=filter_ir_mid)
         i = 0
         for mul_ir in irreps_right
             for ir_out in ir_left * mul_ir.ir
@@ -70,7 +70,7 @@ function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
                     # access last dimension
                     ndims = length(size(E))
                     E[[1:d for d in size(E)[1:ndims-1]]..., start:stop] = C
-                    push!(ret, (ir_out, Wigner.TP((ir_left, mul_ir.ir, ir_out), (path_left, Wigner.Input(length(irrepss_left)+1, start, stop))), E))
+                    push!(ret, (ir_out, E))
                 end
             end
             i += mul_ir.mul * o3.dim(mul_ir.ir)
@@ -215,15 +215,17 @@ function subformulas(f0, formulas, subset)
     end
 
     subformulas = Set()
+    subformulas_st = Set()
     for (s, f) in formulas
         if all(f0[i] in subset || f[i] == i for i in 1:length(f0))
             f_filtered = filter(x -> x in subset_indices, f)
             f_standard = map(x -> standard_indices[f0[x]], f_filtered)
-            push!(subformulas, (s, f_standard))
+            push!(subformulas, (s, f))
+            push!(subformulas_st, (s, f_standard))
         end
     end
 
-    return subformulas
+    return subformulas, subformulas_st
 end
 
 function find_P(f0, formulas, dims)
@@ -299,15 +301,15 @@ function find_P(f0, formulas, dims)
     return P
 end
 
-function find_R(irreps, filter_ir_mid=nothing, filter_ir_out=nothing)
+function find_R_old(irreps, filter_ir_mid=nothing, filter_ir_out=nothing)
     Rs = Dict()
 
-    for (ir, path, base_o3) in _wigner_nj(irreps; filter_ir_mid=filter_ir_mid)
+    for (ir, base_o3) in _wigner_nj(irreps; filter_ir_mid=filter_ir_mid)
         if filter_ir_out === nothing || ir in filter_ir_out
             if !(ir in keys(Rs))
                 Rs[ir] = []
             end
-            push!(Rs[ir], (path, base_o3))
+            push!(Rs[ir], base_o3)
         end
     end
 
@@ -322,14 +324,12 @@ function find_Q(P, Rs, ε=1e-9)
     
     for ir in keys(Rs)
         mul = length(Rs[ir])
-        paths = []
         base_o3 = []
-        for (path, R) in Rs[ir]
-            push!(paths, path)
+        for R in Rs[ir]
             push!(base_o3, R)
         end
         # base_o3/R == clebsch-gordan basis
-        base_o3 = cat(base_o3..., dims = ndims(Rs[ir][1][2])+1)
+        base_o3 = cat(base_o3..., dims = ndims(Rs[ir][1])+1)
         base_o3 = permutedims(base_o3, [ndims(base_o3), 1:ndims(base_o3)-1...])
 
         R = reshape(base_o3, size(base_o3, 1), size(base_o3, 2), :)  # [multiplicity, ir, input basis] (u,j,omega)
@@ -369,7 +369,6 @@ function find_Q(P, Rs, ε=1e-9)
             C = correction * C
 
             # anyway correction * v is supposed to be just one number
-            # push!(outputs, [(correction * v, p) for (v, p) in zip(x, paths) if abs(v) > ε])
             push!(Q, C)
             push!(irreps_out, (1, ir))
         end
@@ -510,8 +509,8 @@ function _rtp_one(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=not
     ### subformulas
     f1 = f0[1:1]
     f2 = f0[2:length(f0)]
-    formulas1 = subformulas(f0, formulas, f1)
-    formulas2 = subformulas(f0, formulas, f2)
+    formulas1_orig, formulas1 = subformulas(f0, formulas, f1)
+    formulas2_orig, formulas2 = subformulas(f0, formulas, f2)
 
     ### bases from the full problem
     # permutation basis
@@ -562,7 +561,7 @@ function reduced_product_dq(formula, irreps, filter_ir_out=nothing, filter_ir_mi
     return _rtp_dq(f0, formulas, irreps, filter_ir_out, filter_ir_mid)
 end
 
-function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9, is_subproblem=false)
+function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9, is_subproblem=false) # for caching, f0 => len(f0), irreps => list
     """divide and conquer - remove 1 index at a time"""
     # base case
     if length(f0) == 1
@@ -607,44 +606,53 @@ function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=noth
     ### find optimal subformulas
     best_subindices = nothing
     D_curr = 1e7
+    sizes = [(0,0), (0,0)] # sizes of out1 and out2 down below
     for subindices in subsets(1:length(f0))
         if length(subindices) > 0 && length(subindices) < length(f0)
             f1 = f0[subindices]
             f2 = f0[[i for i in 1:length(f0) if !(i in subindices)]]
-            formulas1 = subformulas(f0, formulas, f1)
-            formulas2 = subformulas(f0, formulas, f2)
+            _, formulas1 = subformulas(f0, formulas, f1)
+            _, formulas2 = subformulas(f0, formulas, f2)
             P1 = find_P(f1, formulas1, Dict(i => o3.dim(irreps[i]) for i in f1))
             P2 = find_P(f2, formulas2, Dict(i => o3.dim(irreps[i]) for i in f2))
             if prod(size(P1)) * prod(size(P2)) < D_curr
                 D_curr = prod(size(P1)) * prod(size(P2))
+                sizes[1] = size(P1)
+                sizes[2] = size(P2)
                 best_subindices = subindices[:]
             end
         end
     end
     f1 = f0[best_subindices]
     f2 = f0[[i for i in 1:length(f0) if !(i in best_subindices)]]
-    formulas1 = subformulas(f0, formulas, f1)
-    formulas2 = subformulas(f0, formulas, f2)
+    formulas1_orig, formulas1 = subformulas(f0, formulas, f1)
+    formulas2_orig, formulas2 = subformulas(f0, formulas, f2)
 
     ### bases from the full problem
     # permutation basis
     base_perm = find_P(f0, formulas, Dict(i => o3.dim(irs) for (i, irs) in irreps)) # same size as output
     P = reshape(base_perm, size(base_perm, 1), :)  # [permutation basis, input basis] (a,omega)
 
-    ### Qs from subproblems
-    out1 = _rtp_dq(f1, formulas1, Dict(c => irreps[c] for c in f1), filter_ir_out, filter_ir_mid, ε, true)
+    ### Qs from subproblems (irrep outputs)
+    out1 = _rtp_dq(f1, formulas1, Dict(c => irreps[c] for c in f1), filter_ir_out, filter_ir_mid, ε, true) # give these irreps_out a certain block of memory (~1KB or something)
     out2 = _rtp_dq(f2, formulas2, Dict(c => irreps[c] for c in f2), filter_ir_out, filter_ir_mid, ε, true)
 
     ### combine Q1 and Q2
     Q_comb = find_R([out1, out2], filter_ir_mid, filter_ir_out)
 
-    ### if all symmetries are already accounted for, find_Q isn't necessary
-    # if union(Set(formulas1), Set(formulas2)) == Set(formulas)
-    #     return irreps_in, 
+    irreps_in = [irreps[i] for i in f0]
+    
+    # ### if all symmetries are already accounted for, find_Q isn't necessary
+    # if union(Set(formulas1_orig), Set(formulas2_orig)) == Set(formulas)
+    #     println("asdf")
+    #     irreps_out = o3.simplify(o3.Irreps([out1, out2]))
+    #     if is_subproblem
+    #         return irreps_out
+    #     end
+    #     return irreps_in, irreps_out, Q_comb
     # end
 
     ### otherwise, take extra global symmetries into account
-    irreps_in = [irreps[i] for i in f0]
     irreps_out, Q = find_Q(P, Q_comb)
 
     if is_subproblem
