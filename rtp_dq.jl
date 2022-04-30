@@ -333,20 +333,16 @@ function find_R(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
 				# push!(irreps_out, o3.MulIr(mul_ir1.mul * mul_ir2.mul, ir_out))
                 cg = Wigner.wigner_3j(mul_ir1.ir.l, mul_ir2.ir.l, ir_out.l)
                 @einsum C[m, n, k, a, b] := sub_Q1[m, i, a] * sub_Q2[n, j, b] * cg[i, j, k]
-                for _ in 1:mul_ir1.mul * mul_ir2.mul
-                    if filter_ir_out === nothing || ir_out in filter_ir_out
-                        if !(ir_out in keys(Rs))
-                            Rs[ir_out] = []
-                        end
-                        push!(Rs[ir_out], C)
+                if filter_ir_out === nothing || ir_out in filter_ir_out
+                    if !(ir_out in keys(Rs))
+                        Rs[ir_out] = []
                     end
+                    push!(Rs[ir_out], C)
                 end
             end
         end
     end
-	# Rs = concat Rs into a matrix
-	# irreps_out = o3.Irreps(irreps_out)
-	# return irreps_out, Rs
+	# return o3.Irreps(sort(irreps_out)), Rs
     return Rs
 end
 
@@ -420,14 +416,14 @@ function find_Q(P, Rs, ε=1e-9)
     PP = P * transpose(P)  # (a,a)
     
     for ir in keys(Rs)
-        mul = length(Rs[ir])
         base_o3 = []
         for R in Rs[ir]
             push!(base_o3, R)
         end
         # base_o3/R == clebsch-gordan basis
         base_o3 = cat(base_o3..., dims = ndims(Rs[ir][1])+1)
-        base_o3 = reshape(base_o3, size(base_o3, 1) * size(base_o3, 2), size(base_o3, 3), size(base_o3, 4), size(base_o3, 5))
+        mul = size(base_o3, 1) * size(base_o3, 2)
+        base_o3 = reshape(base_o3, mul, size(base_o3, 3), size(base_o3, 4), size(base_o3, 5))
         # base_o3 = permutedims(base_o3, [ndims(base_o3), 1:ndims(base_o3)-1...])
 
         R = reshape(base_o3, size(base_o3, 1), size(base_o3, 2), :)  # [multiplicity, ir, input basis] (u,j,omega)

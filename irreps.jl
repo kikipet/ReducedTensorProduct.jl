@@ -198,6 +198,10 @@ function Base.:isless(f::Irrep, g::Irrep)
     return f.l == g.l && f.p < g.p
 end
 
+function Base.:isless(f::MulIr, g::MulIr)
+    return f.ir < g.ir
+end
+
 function simplify(irreps)
     out = []
     for mul_ir in irreps
