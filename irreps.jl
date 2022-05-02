@@ -1,5 +1,8 @@
 module o3
 
+using LinearAlgebra
+include("wigner.jl")
+
 struct Irrep
     """Irreducible representation of O(3).
     l: degree
@@ -212,6 +215,82 @@ function simplify(irreps)
         end
     end
     return Irreps(out)
+end
+
+
+function direct_sum(matrices)
+    """Direct sum of matrices, put them in the diagonal
+    """
+    front_indices = size(matrices[1])[1:ndims(matrices)-2]
+    m = sum(size(x, ndims(x)-1) for x in matrices)
+    n = sum(size(x, ndims(x)) for x in matrices)
+    out = zeros(front_indices..., m, n)
+    i, j = 1, 1
+    for x in matrices
+        m = size(x, ndims(x) - 1)
+        n = size(x, ndims(x))
+        out[[1:f for f in front_indices]..., i:i + m - 1, j:j + n - 1] = x
+        i += m
+        j += n
+    end
+    return out
+end
+
+function D_from_angles_irrep(irrep, alpha, beta, gamma, k=nothing)
+    """Matrix :math:`p^k D^l(\\alpha, \\beta, \\gamma)`
+    (matrix) Representation of :math:`O(3)`. :math:`D` is the representation of :math:`SO(3)`, see `wigner_D`.
+    Parameters
+    ----------
+    alpha : `torch.Tensor`
+        tensor of shape :math:`(...)`
+        Rotation :math:`\\alpha` around Y axis, applied third.
+    beta : `torch.Tensor`
+        tensor of shape :math:`(...)`
+        Rotation :math:`\\beta` around X axis, applied second.
+    gamma : `torch.Tensor`
+        tensor of shape :math:`(...)`
+        Rotation :math:`\\gamma` around Y axis, applied first.
+    k : `torch.Tensor`, optional
+        tensor of shape :math:`(...)`
+        How many times the parity is applied.
+    Returns
+    -------
+    `torch.Tensor`
+        tensor of shape :math:`(..., 2l+1, 2l+1)`
+    See Also
+    --------
+    o3.wigner_D
+    Irreps.D_from_angles
+    """
+    if k === nothing
+        k = zeros(size(alpha)...)
+    end
+
+    alpha = broadcast((α, β, γ, k) -> α, alpha, beta, gamma, k)
+    beta = broadcast((α, β, γ, k) -> β, alpha, beta, gamma, k)
+    gamma = broadcast((α, β, γ, k) -> γ, alpha, beta, gamma, k)
+    k = broadcast((α, β, γ, k) -> k, alpha, beta, gamma, k)
+    return Wigner.wigner_D(irrep.l, alpha, beta, gamma) .* reshape([irrep.p^k], 1, 1)
+end
+
+function D_from_angles_irreps(irreps, alpha, beta, gamma, k=nothing)
+    """Matrix of the representation
+    Parameters
+    ----------
+    alpha : `torch.Tensor`
+        tensor of shape :math:`(...)`
+    beta : `torch.Tensor`
+        tensor of shape :math:`(...)`
+    gamma : `torch.Tensor`
+        tensor of shape :math:`(...)`
+    k : `torch.Tensor`, optional
+        tensor of shape :math:`(...)`
+    Returns
+    -------
+    `torch.Tensor`
+        tensor of shape :math:`(..., \\mathrm{dim}, \\mathrm{dim})`
+    """
+    return direct_sum([D_from_angles_irrep(mul_ir.ir, alpha, beta, gamma, k) for mul_ir in irreps for _ in 1:mul_ir.mul])
 end
 
 end

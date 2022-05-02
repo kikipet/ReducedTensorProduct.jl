@@ -17,6 +17,72 @@ end
 
 int(x) = floor(Int, x)
 
+function su2_generators(j)
+    m = [-j:j-1...]
+    raising = diagm(-1 => -broadcast(sqrt, j .* (j .+ 1) .- m .* (m .+ 1)))
+
+    m = [-j+1:j...]
+    lowering = diagm(1 => broadcast(sqrt, j .* (j .+ 1) .- m .* (m .- 1)))
+
+    m = [-j:j...]
+    return permutedims(cat(
+        0.5 * (raising + lowering),  # x (usually)
+        diagm(1im * m),  # z (usually)
+        -0.5im * (raising - lowering),  # -y (usually)
+        dims=3), [3, 1, 2]) # originally stack(..., dim=0)
+        # I hope this is always in 3 dimensions
+end
+
+function so3_generators(l)
+    X = su2_generators(l)
+    Q = change_basis_real_to_complex(l)
+    X = cat([conj(transpose(Q)) * X[i, :, :] * Q for i in 1:3]..., dims=3)
+    X = permutedims(X, [3, 1, 2])
+    @assert all(broadcast(x -> abs(imag(x)) < 1e-5, X))
+    return real(X)
+end
+
+function wigner_D(l, alpha, beta, gamma)
+    """Wigner D matrix representation of :math:`SO(3)`.
+    It satisfies the following properties:
+    * :math:`D(\\text{identity rotation}) = \\text{identity matrix}`
+    * :math:`D(R_1 \\circ R_2) = D(R_1) \\circ D(R_2)`
+    * :math:`D(R^{-1}) = D(R)^{-1} = D(R)^T`
+    * :math:`D(\\text{rotation around Y axis})` has some property that allows us to use FFT in `ToS2Grid`
+    Parameters
+    ----------
+    l : int
+        :math:`l`
+    alpha : `torch.Tensor`
+        tensor of shape :math:`(...)`
+        Rotation :math:`\\alpha` around Y axis, applied third.
+    beta : `torch.Tensor`
+        tensor of shape :math:`(...)`
+        Rotation :math:`\\beta` around X axis, applied second.
+    gamma : `torch.Tensor`
+        tensor of shape :math:`(...)`
+        Rotation :math:`\\gamma` around Y axis, applied first.
+    Returns
+    -------
+    `torch.Tensor`
+        tensor :math:`D^l(\\alpha, \\beta, \\gamma)` of shape :math:`(2l+1, 2l+1)`
+    """
+    alpha = broadcast((α, β, γ) -> α, alpha, beta, gamma)
+    beta = broadcast((α, β, γ) -> β, alpha, beta, gamma)
+    gamma = broadcast((α, β, γ) -> γ, alpha, beta, gamma)
+    sizes = size(alpha)
+    if size(alpha) == ()
+        alpha = [alpha]
+        beta = [beta]
+        gamma = [gamma]
+    end
+    alpha = reshape(alpha, sizes..., 1, 1) .% (2 * pi)
+    beta = reshape(beta, sizes..., 1, 1) .% (2 * pi)
+    gamma = reshape(gamma, sizes..., 1, 1) .% (2 * pi)
+    X = so3_generators(l)
+    return exp(alpha .* X[2, :, :]) * exp(beta .* X[1, :, :]) * exp(gamma .* X[2, :, :]) # pretty sure that indexing is off
+end
+
 function change_basis_real_to_complex(l)
     q = zeros(ComplexF64, 2 * l + 1, 2 * l + 1)
     for m in -l:-1
