@@ -19,12 +19,21 @@ int(x) = floor(Int, x)
 
 function su2_generators(j)
     m = [-j:j-1...]
+    if length(m) == 0
+        m = Array{Float64}(undef, 0)
+    end
     raising = diagm(-1 => -broadcast(sqrt, j .* (j .+ 1) .- m .* (m .+ 1)))
 
     m = [-j+1:j...]
+    if length(m) == 0
+        m = Array{Float64}(undef, 0)
+    end
     lowering = diagm(1 => broadcast(sqrt, j .* (j .+ 1) .- m .* (m .- 1)))
 
     m = [-j:j...]
+    if length(m) == 0
+        m = Array{Float64}(undef, 0)
+    end
     return permutedims(cat(
         0.5 * (raising + lowering),  # x (usually)
         diagm(1im * m),  # z (usually)
