@@ -336,7 +336,7 @@ function spherical_harmonics(lmax, p=-1)
     >>> Irreps.spherical_harmonics(4, p=1)
     1x0e+1x1e+1x2e+1x3e+1x4e
     """
-    return Irreps([(1, (l, p^l)) for l in 0:lmax])
+    return Irreps([MulIr(1, Irrep(l, p^l)) for l in 0:lmax])
 end
 
 end
