@@ -293,4 +293,50 @@ function D_from_angles_irreps(irreps, alpha, beta, gamma, k=nothing)
     return direct_sum([D_from_angles_irrep(mul_ir.ir, alpha, beta, gamma, k) for mul_ir in irreps for _ in 1:mul_ir.mul])
 end
 
+function rand_angles(shape)
+    """random rotation angles
+
+    Parameters
+    ----------
+    *shape : int
+
+    Returns
+    -------
+    alpha : `torch.Tensor`
+        tensor of shape :math:`(\\mathrm{shape})`
+
+    beta : `torch.Tensor`
+        tensor of shape :math:`(\\mathrm{shape})`
+
+    gamma : `torch.Tensor`
+        tensor of shape :math:`\\mathrm{shape})`
+    """
+    alpha = 2 * pi * rand(shape...)
+    gamma = 2 * pi * rand(shape...)
+    beta = acos.(rand(shape...) .* 2 .- 1)
+    return alpha, beta, gamma
+end
+
+function spherical_harmonics(lmax, p=-1)
+    """representation of the spherical harmonics
+    Parameters
+    ----------
+    lmax : int
+        maximum :math:`l`
+    p : {1, -1}
+        the parity of the representation
+    Returns
+    -------
+    `e3nn.o3.Irreps`
+        representation of :math:`(Y^0, Y^1, \\dots, Y^{\\mathrm{lmax}})`
+    Examples
+    --------
+    >>> Irreps.spherical_harmonics(3)
+    1x0e+1x1o+1x2e+1x3o
+    >>> Irreps.spherical_harmonics(4, p=1)
+    1x0e+1x1e+1x2e+1x3e+1x4e
+    """
+    return Irreps([(1, (l, p^l)) for l in 0:lmax])
+end
+
 end

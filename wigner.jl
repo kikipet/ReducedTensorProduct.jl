@@ -3,18 +3,6 @@ module Wigner
 using LinearAlgebra
 using Einsum
 
-struct TP
-    op::Tuple
-    args::Tuple
-end
-
-struct Input
-    # start and stop are both inclusive
-    tensor::Int
-    start::Int
-    stop::Int
-end
-
 int(x) = floor(Int, x)
 
 function su2_generators(j)
@@ -89,7 +77,7 @@ function wigner_D(l, alpha, beta, gamma)
     beta = reshape(beta, sizes..., 1, 1) .% (2 * pi)
     gamma = reshape(gamma, sizes..., 1, 1) .% (2 * pi)
     X = so3_generators(l)
-    return exp(alpha .* X[2, :, :]) * exp(beta .* X[1, :, :]) * exp(gamma .* X[2, :, :]) # pretty sure that indexing is off
+    return exp(alpha .* X[2, :, :]) * exp(beta .* X[1, :, :]) * exp(gamma .* X[2, :, :])
 end
 
 function change_basis_real_to_complex(l)
@@ -177,19 +165,4 @@ function _su2_clebsch_gordan_coeff(idx1, idx2, idx3)
     return C
 end
 
-
-function _get_ops(path)
-    if typeof(path) == Input
-        return
-    end
-    @assert typeof(path) == TP
-    ops = []
-    push!(ops, path.op)
-    for op in _get_ops(path.args[1])
-        push!(ops, op)
-    end
-    return ops
-end
-
-export TP, Input, wigner_3j, _get_ops
 end
