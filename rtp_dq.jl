@@ -1,16 +1,19 @@
-module ReducedTensorProduct
+@everywhere module ReducedTensorProduct
 
 using Distributed
+# using SharedArrays
+# using Base.Threads
 using IterTools
 using LinearAlgebra
 using Einsum
 include("irreps.jl")
 include("wigner.jl")
-# @everywhere using IterTools
-# @everywhere using LinearAlgebra
-# @everywhere using Einsum
-# @everywhere include("irreps.jl")
-# @everywhere include("wigner.jl")
+@everywhere using Distributed
+@everywhere using IterTools
+@everywhere using LinearAlgebra
+@everywhere using Einsum
+@everywhere include("irreps.jl")
+@everywhere include("wigner.jl")
 
 
 function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
@@ -228,6 +231,46 @@ function subformulas(f0, formulas, subset)
     return subformulas, subformulas_st
 end
 
+function find_P_dim(f0, formulas, dims)
+    # here we check that each index has one and only one dimension
+    for (s, p) in formulas
+        f = string([f0[i] for i in p]...)
+        for (i, j) in zip(f0, f)
+            if i in keys(dims)
+                dims[j] = dims[i]
+            end
+            if j in keys(dims)
+                dims[i] = dims[j]
+            end
+        end
+    end
+
+    dims = [dims[i] for i in f0]
+
+    full_base = product([1:d for d in dims]...)  # (0, 0, 0), (0, 0, 1), (0, 0, 2), ... (d1, d2, d3)
+    # len(full_base) degrees of freedom in an unconstrained tensor
+
+    # but there is constraints given by the group `formulas`
+    # For instance if `ij=-ji`, then 00=-00, 01=-01 and so on
+    base = Set()
+    for x in full_base
+        # T[x] is a coefficient of the tensor T and is related to other coefficient T[y]
+        # if x and y are related by a formula
+        xs = Set([(s, [x[i] for i in p]) for (s, p) in formulas])
+        # s * T[x] are all equal for all (s, x) in xs
+        # if T[x] = -T[x] it is then equal to 0 and we lose this degree of freedom
+        if !((-1, [x...]) in xs)
+            # the sign is arbitrary, put both possibilities
+            push!(base, Set([
+                Set(xs),
+                Set([(-s, x) for (s, x) in xs])
+            ]))
+        end
+    end
+
+    return length(base) * prod(dims...)
+end
+
 function find_P(f0, formulas, dims)
     """
     should be called like
@@ -321,12 +364,12 @@ function find_R(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
 	irreps_out = []
 	k1 = 1
 	for mul_ir1 in irreps1
-		sub_Q1 = Q1[k1:k1 + o3.dim(mul_ir1) - 1, [1:size(Q1, d) for d in 2:ndims(Q1)]...]
+        sub_Q1 = selectdim(Q1, 1, k1:k1 + o3.dim(mul_ir1) - 1)
 		sub_Q1 = reshape(sub_Q1, mul_ir1.mul, o3.dim(mul_ir1.ir), :)
 		k1 += o3.dim(mul_ir1)
 		k2 = 1
 		for mul_ir2 in irreps2
-			sub_Q2 = Q2[k2:k2 + o3.dim(mul_ir2) - 1, [1:size(Q2, d) for d in 2:ndims(Q2)]...]
+            sub_Q2 = selectdim(Q2, 1, k2:k2 + o3.dim(mul_ir2) - 1)
 			sub_Q2 = reshape(sub_Q2, mul_ir2.mul, o3.dim(mul_ir2.ir), :)
 			k2 += o3.dim(mul_ir2)
 			for ir_out in mul_ir1.ir * mul_ir2.ir
@@ -338,10 +381,9 @@ function find_R(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
                         Rs[ir_out] = []
                     end
                     # push!(Rs[ir_out], C)
-                    # not sure if this is legit
                     for i in 1:size(C, 1)
                         for j in 1:size(C, 2)
-                            push!(Rs[ir_out], reshape(C[i, j, :, :, :], size(C, 3), [size(Q1, d) for d in 2:ndims(Q1)]..., [size(Q2, d) for d in 2:ndims(Q2)]...)) # ?? dimensions?
+                            push!(Rs[ir_out], reshape(C[i, j, :, :, :], size(C, 3), [size(Q1, d) for d in 2:ndims(Q1)]..., [size(Q2, d) for d in 2:ndims(Q2)]...))
                         end
                     end
                 end
@@ -352,13 +394,21 @@ function find_R(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
     # return Rs
 end
 
-function find_Q_old(P, Rs, ε=1e-9)
-    Q = []
-    irreps_out = []
+@everywhere function append2(t1, t2)
+    append!(t1[1], t2[1])
+    append!(t1[2], t2[2])
+    return t1
+end
+function append2(t1, t2)
+    append!(t1[1], t2[1])
+    append!(t1[2], t2[2])
+    return t1
+end
 
+function find_Q_dist(P, Rs, ε=1e-9)
     PP = P * transpose(P)  # (a,a)
     
-    for ir in keys(Rs)
+    irreps_out, Q = @distributed (append2) for ir in [keys(Rs)...]
         mul = length(Rs[ir])
         base_o3 = []
         for R in Rs[ir]
@@ -368,54 +418,45 @@ function find_Q_old(P, Rs, ε=1e-9)
         base_o3 = cat(base_o3..., dims = ndims(Rs[ir][1])+1)
         base_o3 = permutedims(base_o3, [ndims(base_o3), 1:ndims(base_o3)-1...])
 
-        R = reshape(base_o3, size(base_o3, 1), size(base_o3, 2), :)  # [multiplicity, ir, input basis] (u,j,omega) 
+        R = reshape(base_o3, size(base_o3, 1), size(base_o3, 2), :)  # [multiplicity, ir, input basis] (u,j,omega)
 
-        proj_s = []  # list of projectors into vector space
-        for j in range(1, o3.dim(ir))
-            ### Solve X @ R[:, j] = Y @ P, but keep only X
-            RR = R[:, j, :] * transpose(R[:, j, :])  # (u,u)
-            RP = R[:, j, :] * transpose(P)  # (u,a)
+        ### Solve X @ R[:, j] = Y @ P, but keep only X
+        RR = view(R, :, 1, :) * transpose(view(R, :, 1, :))  # (u,u)
+        RP = view(R, :, 1, :) * transpose(P)  # (u,a)
 
-            prob = cat(cat(RR, -RP, dims=2), cat(transpose(-RP), PP, dims=2), dims=1)
-            eigenvalues, eigenvectors = eigen(prob)
-            eigvec_filtered = eigenvectors[:, map(λ -> λ < ε, eigenvalues)]
-            if length(eigvec_filtered) > 0
-                X = eigenvectors[:, map(λ -> λ < ε, eigenvalues)][1:mul, :]  # [solutions, multiplicity]
-                push!(proj_s, X * transpose(X))
-            else
-                push!(proj_s, [0.0;;])
-            end
-
-            break  # do not check all components because too time expensive
-        end
-
-        for p in proj_s
-            if max(map(abs, p - proj_s[1])...) > ε
-                throw(error("found different solutions for irrep $ir"))
-            end
+        prob = cat(cat(RR, -RP, dims=2), cat(transpose(-RP), PP, dims=2), dims=1)
+        eigenvalues, eigenvectors = eigen(prob)
+        eigvec_filtered = eigenvectors[:, map(λ -> λ < ε, eigenvalues)]
+        if length(eigvec_filtered) > 0
+            X = eigvec_filtered[1:mul, :]  # [solutions, multiplicity]
+            proj_s = X * transpose(X)
+        else
+            proj_s = [0.0;;]
         end
 
         # look for an X such that Xᵀ * X = Projector
-        X, _ = orthonormalize(proj_s[1], ε)
+        X, _ = orthonormalize(proj_s, ε)
+
+        Q_tmp = []
+        mul_out = 0
 
         for x in X
-            C = sum([x[ndx] .* base_o3[ndx, [1:sz for sz in size(base_o3)[2:ndims(base_o3)]]...] for ndx in 1:length(x)])
+            C = sum([x[ndx] .* selectdim(base_o3, 1, ndx) for ndx in 1:length(x)])
             # C = torch.einsum("u,ui...->i...", x, base_o3)
             correction = (o3.dim(ir) / sum(C.^2))^0.5
             C = correction * C
-
-            # anyway correction * v is supposed to be just one number
-            push!(Q, C)
-            push!(irreps_out, (1, ir))
+            push!(Q_tmp, C)
+            mul_out += 1
         end
+        ([(mul_out, ir)], Q_tmp)
     end
 
-    irreps_out = o3.simplify(o3.Irreps(irreps_out))
     Q = vcat(Q...)
+    irreps_out = o3.simplify(o3.Irreps(irreps_out))
     return irreps_out, Q
 end
 
-function find_Q(P, Rs, ε=1e-9)
+function find_Q_serial(P, Rs, ε=1e-9)
     Q = []
     irreps_out = []
 
@@ -451,7 +492,7 @@ function find_Q(P, Rs, ε=1e-9)
         X, _ = orthonormalize(proj_s, ε)
 
         for x in X
-            C = sum([x[ndx] .* base_o3[ndx, [1:sz for sz in size(base_o3)[2:ndims(base_o3)]]...] for ndx in 1:length(x)])
+            C = sum([x[ndx] .* selectdim(base_o3, 1, ndx) for ndx in 1:length(x)])
             # C = torch.einsum("u,ui...->i...", x, base_o3)
             correction = (o3.dim(ir) / sum(C.^2))^0.5
             C = correction * C
@@ -466,7 +507,7 @@ function find_Q(P, Rs, ε=1e-9)
     return irreps_out, Q
 end
 
-function reduced_product(formula, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9)
+function reduced_product(formula, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9; parallel=true)
     """original, serial + no DQ"""
     if filter_ir_out !== nothing
         try
@@ -524,12 +565,17 @@ function reduced_product(formula, irreps, filter_ir_out=nothing, filter_ir_mid=n
     Rs = find_R_old([irreps[i] for i in f0], filter_ir_mid, filter_ir_out)
 
     irreps_in = [irreps[i] for i in f0]
-    irreps_out, change_of_basis = find_Q_old(P, Rs)
 
-    return irreps_in, irreps_out, change_of_basis
+    if parallel
+        irreps_out, Q = find_Q_dist(P, Rs)
+    else
+        irreps_out, Q = find_Q_serial(P, Rs)
+    end
+
+    return irreps_in, irreps_out, Q
 end
 
-function reduced_product_dq(formula, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9)
+function reduced_product_dq(formula, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9; parallel=true)
     """divide and conquer - multiple"""
     if filter_ir_out !== nothing
         try
@@ -548,10 +594,10 @@ function reduced_product_dq(formula, irreps, filter_ir_out=nothing, filter_ir_mi
     
     f0, formulas = germinate_formulas(formula) # create representations for all equivalent index permutations
 
-    return _rtp_dq(f0, formulas, irreps, filter_ir_out, filter_ir_mid)
+    return _rtp_dq(f0, formulas, irreps, filter_ir_out, filter_ir_mid, ε, parallel=parallel)
 end
 
-function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9) # for caching, f0 => len(f0), irreps => list
+function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9; parallel=true) # for caching, f0 => len(f0), irreps => list
     """divide and conquer - remove 1 index at a time"""
     # base case
     if length(f0) == 1
@@ -600,12 +646,10 @@ function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=noth
             f2 = f0[[i for i in 1:length(f0) if !(i in subindices)]]
             _, formulas1 = subformulas(f0, formulas, f1)
             _, formulas2 = subformulas(f0, formulas, f2)
-            P1 = find_P(f1, formulas1, Dict(i => o3.dim(irreps[i]) for i in f1))
-            P2 = find_P(f2, formulas2, Dict(i => o3.dim(irreps[i]) for i in f2))
-            if prod(size(P1)) * prod(size(P2)) < D_curr
-                D_curr = prod(size(P1)) * prod(size(P2))
-                # sizes[1] = size(P1)
-                # sizes[2] = size(P2)
+            p1 = find_P_dim(f1, formulas1, Dict(i => o3.dim(irreps[i]) for i in f1))
+            p2 = find_P_dim(f2, formulas2, Dict(i => o3.dim(irreps[i]) for i in f2))
+            if p1 * p2 < D_curr
+                D_curr = p1 * p2
                 best_subindices = subindices[:]
             end
         end
@@ -621,9 +665,9 @@ function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=noth
     P = reshape(base_perm, size(base_perm, 1), :)  # [permutation basis, input basis] (a,omega)
 
     ### Qs from subproblems (irrep outputs)
-    in1, out1, Q1 = _rtp_dq(f1, formulas1, Dict(c => irreps[c] for c in f1), filter_ir_out, filter_ir_mid, ε) # give these irreps_out a certain block of memory (~1KB or something)
-    in2, out2, Q2 = _rtp_dq(f2, formulas2, Dict(c => irreps[c] for c in f2), filter_ir_out, filter_ir_mid, ε)
-
+    _, out1, Q1 = _rtp_dq(f1, formulas1, Dict(c => irreps[c] for c in f1), filter_ir_out, filter_ir_mid, ε, parallel=parallel)
+    _, out2, Q2 = _rtp_dq(f2, formulas2, Dict(c => irreps[c] for c in f2), filter_ir_out, filter_ir_mid, ε, parallel=parallel)
+    
     ### combine Q1 and Q2
     irreps_out, R = find_R(out1, out2, Q1, Q2, filter_ir_out)
 
@@ -636,7 +680,11 @@ function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=noth
     # end
 
     ### otherwise, take extra global symmetries into account
-    irreps_out, Q = find_Q(P, R)
+    if parallel
+        irreps_out, Q = find_Q_dist(P, R)
+    else
+        irreps_out, Q = find_Q_serial(P, R)
+    end
 
     return irreps_in, irreps_out, Q
 end
