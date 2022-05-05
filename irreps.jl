@@ -112,6 +112,8 @@ function Irreps(irreps)
             println("Unable to convert string \"$irreps\" into an Irreps")
             throw(error())
         end
+    elseif typeof(irreps) == Irreps
+        return irreps
     else
         for mul_ir in irreps
             mul = nothing
@@ -338,5 +340,7 @@ function spherical_harmonics(lmax, p=-1)
     """
     return Irreps([MulIr(1, Irrep(l, p^l)) for l in 0:lmax])
 end
+
+export Irrep, Irreps, MulIr, spherical_harmonics
 
 end
