@@ -423,70 +423,6 @@ function find_R(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
     # return Rs
 end
 
-function find_R_dist(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
-	Rs = Dict() # dictionary of irreps -> matrix
-	irreps_out = []
-	k1 = 1
-	for mul_ir1 in irreps1
-        sub_Q1 = selectdim(Q1, 1, k1:k1 + o3.dim(mul_ir1) - 1)
-		sub_Q1 = reshape(sub_Q1, mul_ir1.mul, o3.dim(mul_ir1.ir), :)
-		k1 += o3.dim(mul_ir1)
-		k2 = 1
-		for mul_ir2 in irreps2
-            sub_Q2 = selectdim(Q2, 1, k2:k2 + o3.dim(mul_ir2) - 1)
-			sub_Q2 = reshape(sub_Q2, mul_ir2.mul, o3.dim(mul_ir2.ir), :)
-			k2 += o3.dim(mul_ir2)
-			for ir_out in mul_ir1.ir * mul_ir2.ir
-				push!(irreps_out, o3.MulIr(mul_ir1.mul * mul_ir2.mul, ir_out))
-                cg = Wigner.wigner_3j(mul_ir1.ir.l, mul_ir2.ir.l, ir_out.l)
-                ### einsums
-                m, i, a = size(sub_Q1)
-                n, j, b = size(sub_Q2)
-                k = size(cg, 3)
-                # @einsum C_tmp[j, k, m, a] := sub_Q1[m, i, a] * cg[i, j, k]
-                C_tmp = zeros(j, k, m, a)
-                for em in 1:m
-                    for ej in 1:j
-                        for ek in 1:k
-                            c = zeros(a)
-                            for ei in 1:i
-                                c += view(sub_Q1, em, ei, :) * cg[ei, ej, ek]
-                            end
-                            C_tmp[ej, ek, em, :] = c
-                        end
-                    end
-                end
-                # @einsum C[m, n, k, a, b] := sub_Q2[n, j, b] * C_tmp[j, k, m, a]
-                C = zeros(m * n, k, a, b)
-                for em in 1:m
-                    for en in 1:n
-                        for ek = 1:k
-                            for ea in 1:a
-                                c = zeros(b)
-                                for ej in 1:j
-                                    c += view(sub_Q2, en, ej, :) * C_tmp[ej, ek, em, ea]
-                                end
-                                C[em + (en-1) * m, ek, ea, :] = c
-                            end
-                        end
-                    end
-                end
-                C = reshape(C, size(C, 1), size(C, 2), size(Q1)[2:end]..., size(Q2)[2:end]...)
-                if filter_ir_out === nothing || ir_out in filter_ir_out
-                    if !(ir_out in keys(Rs))
-                        Rs[ir_out] = []
-                    end
-                    for i in 1:size(C, 1)
-                        push!(Rs[ir_out], selectdim(C, 1, i))
-                    end
-                end
-            end
-        end
-    end
-	return o3.simplify(o3.Irreps(sort(irreps_out))), Rs
-    # return Rs
-end
-
 @everywhere function append2(t1, t2)
     append!(t1[1], t2[1])
     append!(t1[2], t2[2])
@@ -683,7 +619,7 @@ function reduced_product_dq(formula, irreps, filter_ir_out=nothing, filter_ir_mi
 end
 
 function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9; parallel=false) # for caching, f0 => len(f0), irreps => list
-    """divide and conquer - remove 1 index at a time"""
+    """divide and conquer"""
     # base case
     if length(f0) == 1
         ir = o3.Irreps(irreps[only(f0)])
