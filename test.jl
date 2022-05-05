@@ -4,7 +4,7 @@ using Einsum
 using LinearAlgebra
 
 
-function assert_equivariant()
+function assert_equivariance()
     irreps_in = "1o"
     _, irreps_out, Q = ReducedTensorProduct.reduced_product_dq("ijkl=jikl=klij", Dict('i' => irreps_in))
 
@@ -51,4 +51,12 @@ function assert_orthogonality()
     _, irreps_out, Q = ReducedTensorProduct.reduced_product_dq("ijkl=jikl=klij", Dict('i' => irreps_in))
     @einsum n2[z, w] := Q[z, i, j, k, l] * Q[w, i, j, k, l]
     @assert isapprox(n2, I(size(Q, 1)), atol=1e-5)
+end
+
+
+function all_tests()
+    assert_equivariance()
+    assert_permutation()
+    assert_permutation2()
+    assert_orthogonality()
 end

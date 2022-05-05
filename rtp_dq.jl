@@ -234,7 +234,7 @@ end
 function find_P_dim(f0, formulas, dims)
     # here we check that each index has one and only one dimension
     for (s, p) in formulas
-        f = string([f0[i] for i in p]...)
+        f = [f0[i] for i in p]
         for (i, j) in zip(f0, f)
             if i in keys(dims)
                 dims[j] = dims[i]
@@ -256,19 +256,19 @@ function find_P_dim(f0, formulas, dims)
     for x in full_base
         # T[x] is a coefficient of the tensor T and is related to other coefficient T[y]
         # if x and y are related by a formula
-        xs = Set([(s, [x[i] for i in p]) for (s, p) in formulas])
+        xs = Set((s, [x[i] for i in p]) for (s, p) in formulas)
         # s * T[x] are all equal for all (s, x) in xs
         # if T[x] = -T[x] it is then equal to 0 and we lose this degree of freedom
         if !((-1, [x...]) in xs)
             # the sign is arbitrary, put both possibilities
             push!(base, Set([
-                Set(xs),
-                Set([(-s, x) for (s, x) in xs])
+                xs,
+                Set((-s, x) for (s, x) in xs)
             ]))
         end
     end
 
-    return length(base) * prod(dims...)
+    return length(base) * prod(dims)
 end
 
 function find_P(f0, formulas, dims)
@@ -278,7 +278,7 @@ function find_P(f0, formulas, dims)
     """
     # here we check that each index has one and only one dimension
     for (s, p) in formulas
-        f = string([f0[i] for i in p]...)
+        f = [f0[i] for i in p]
         for (i, j) in zip(f0, f)
             if i in keys(dims) && j in keys(dims) && dims[i] != dims[j]
                 throw(error("dimension of $i and $j should be the same"))
@@ -308,14 +308,14 @@ function find_P(f0, formulas, dims)
     for x in full_base
         # T[x] is a coefficient of the tensor T and is related to other coefficient T[y]
         # if x and y are related by a formula
-        xs = Set([(s, [x[i] for i in p]) for (s, p) in formulas])
+        xs = Set((s, [x[i] for i in p]) for (s, p) in formulas)
         # s * T[x] are all equal for all (s, x) in xs
         # if T[x] = -T[x] it is then equal to 0 and we lose this degree of freedom
         if !((-1, [x...]) in xs)
             # the sign is arbitrary, put both possibilities
             push!(base, Set([
-                Set(xs),
-                Set([(-s, x) for (s, x) in xs])
+                xs,
+                Set((-s, x) for (s, x) in xs)
             ]))
         end
     end
@@ -375,16 +375,109 @@ function find_R(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
 			for ir_out in mul_ir1.ir * mul_ir2.ir
 				push!(irreps_out, o3.MulIr(mul_ir1.mul * mul_ir2.mul, ir_out))
                 cg = Wigner.wigner_3j(mul_ir1.ir.l, mul_ir2.ir.l, ir_out.l)
-                @einsum C[m, n, k, a, b] := sub_Q1[m, i, a] * sub_Q2[n, j, b] * cg[i, j, k]
+                ### einsums
+                m, i, a = size(sub_Q1)
+                n, j, b = size(sub_Q2)
+                k = size(cg, 3)
+                # @einsum C_tmp[j, k, m, a] := sub_Q1[m, i, a] * cg[i, j, k]
+                C_tmp = zeros(j, k, m, a)
+                for em in 1:m
+                    for ej in 1:j
+                        for ek in 1:k
+                            c = zeros(a)
+                            for ei in 1:i
+                                c += view(sub_Q1, em, ei, :) * cg[ei, ej, ek]
+                            end
+                            C_tmp[ej, ek, em, :] = c
+                        end
+                    end
+                end
+                # @einsum C[m, n, k, a, b] := sub_Q2[n, j, b] * C_tmp[j, k, m, a]
+                C = zeros(m * n, k, a, b)
+                for em in 1:m
+                    for en in 1:n
+                        for ek = 1:k
+                            for ea in 1:a
+                                c = zeros(b)
+                                for ej in 1:j
+                                    c += view(sub_Q2, en, ej, :) * C_tmp[ej, ek, em, ea]
+                                end
+                                C[em + (en-1) * m, ek, ea, :] = c
+                            end
+                        end
+                    end
+                end
+                C = reshape(C, size(C, 1), size(C, 2), size(Q1)[2:end]..., size(Q2)[2:end]...)
                 if filter_ir_out === nothing || ir_out in filter_ir_out
                     if !(ir_out in keys(Rs))
                         Rs[ir_out] = []
                     end
-                    # push!(Rs[ir_out], C)
                     for i in 1:size(C, 1)
-                        for j in 1:size(C, 2)
-                            push!(Rs[ir_out], reshape(C[i, j, :, :, :], size(C, 3), [size(Q1, d) for d in 2:ndims(Q1)]..., [size(Q2, d) for d in 2:ndims(Q2)]...))
+                        push!(Rs[ir_out], selectdim(C, 1, i))
+                    end
+                end
+            end
+        end
+    end
+	return o3.simplify(o3.Irreps(sort(irreps_out))), Rs
+    # return Rs
+end
+
+function find_R_dist(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
+	Rs = Dict() # dictionary of irreps -> matrix
+	irreps_out = []
+	k1 = 1
+	for mul_ir1 in irreps1
+        sub_Q1 = selectdim(Q1, 1, k1:k1 + o3.dim(mul_ir1) - 1)
+		sub_Q1 = reshape(sub_Q1, mul_ir1.mul, o3.dim(mul_ir1.ir), :)
+		k1 += o3.dim(mul_ir1)
+		k2 = 1
+		for mul_ir2 in irreps2
+            sub_Q2 = selectdim(Q2, 1, k2:k2 + o3.dim(mul_ir2) - 1)
+			sub_Q2 = reshape(sub_Q2, mul_ir2.mul, o3.dim(mul_ir2.ir), :)
+			k2 += o3.dim(mul_ir2)
+			for ir_out in mul_ir1.ir * mul_ir2.ir
+				push!(irreps_out, o3.MulIr(mul_ir1.mul * mul_ir2.mul, ir_out))
+                cg = Wigner.wigner_3j(mul_ir1.ir.l, mul_ir2.ir.l, ir_out.l)
+                ### einsums
+                m, i, a = size(sub_Q1)
+                n, j, b = size(sub_Q2)
+                k = size(cg, 3)
+                # @einsum C_tmp[j, k, m, a] := sub_Q1[m, i, a] * cg[i, j, k]
+                C_tmp = zeros(j, k, m, a)
+                for em in 1:m
+                    for ej in 1:j
+                        for ek in 1:k
+                            c = zeros(a)
+                            for ei in 1:i
+                                c += view(sub_Q1, em, ei, :) * cg[ei, ej, ek]
+                            end
+                            C_tmp[ej, ek, em, :] = c
                         end
+                    end
+                end
+                # @einsum C[m, n, k, a, b] := sub_Q2[n, j, b] * C_tmp[j, k, m, a]
+                C = zeros(m * n, k, a, b)
+                for em in 1:m
+                    for en in 1:n
+                        for ek = 1:k
+                            for ea in 1:a
+                                c = zeros(b)
+                                for ej in 1:j
+                                    c += view(sub_Q2, en, ej, :) * C_tmp[ej, ek, em, ea]
+                                end
+                                C[em + (en-1) * m, ek, ea, :] = c
+                            end
+                        end
+                    end
+                end
+                C = reshape(C, size(C, 1), size(C, 2), size(Q1)[2:end]..., size(Q2)[2:end]...)
+                if filter_ir_out === nothing || ir_out in filter_ir_out
+                    if !(ir_out in keys(Rs))
+                        Rs[ir_out] = []
+                    end
+                    for i in 1:size(C, 1)
+                        push!(Rs[ir_out], selectdim(C, 1, i))
                     end
                 end
             end
@@ -405,17 +498,60 @@ function append2(t1, t2)
     return t1
 end
 
+function find_Q_serial(P, Rs, ε=1e-9)
+    Q = []
+    irreps_out = []
+
+    PP = P * transpose(P)  # (a,a)
+    
+    for ir in keys(Rs)
+        mul = length(Rs[ir])
+        # base_o3/R == clebsch-gordan basis
+        base_o3 = cat(Rs[ir]..., dims = ndims(Rs[ir][1])+1) # this is slow
+        base_o3 = permutedims(base_o3, [ndims(base_o3), 1:ndims(base_o3)-1...])
+
+        R = reshape(base_o3, size(base_o3, 1), size(base_o3, 2), :)  # [multiplicity, ir, input basis] (u,j,omega)
+
+        ### Solve X @ R[:, j] = Y @ P, but keep only X
+        RR = view(R, :, 1, :) * transpose(view(R, :, 1, :))  # (u,u)
+        RP = view(R, :, 1, :) * transpose(P)  # (u,a)
+
+        prob = cat(cat(RR, -RP, dims=2), cat(transpose(-RP), PP, dims=2), dims=1) # this is slow
+        eigenvalues, eigenvectors = eigen(prob)
+        eigvec_filtered = eigenvectors[:, map(λ -> λ < ε, eigenvalues)]
+        if length(eigvec_filtered) > 0
+            X = eigvec_filtered[1:mul, :]  # [solutions, multiplicity]
+            proj_s = X * transpose(X)
+        else
+            proj_s = [0.0;;]
+        end
+
+        # look for an X such that Xᵀ * X = Projector
+        X, _ = orthonormalize(proj_s, ε)
+
+        for x in X
+            C = sum([x[ndx] .* selectdim(base_o3, 1, ndx) for ndx in 1:length(x)])
+            # C = torch.einsum("u,ui...->i...", x, base_o3)
+            correction = (o3.dim(ir) / sum(C.^2))^0.5
+            C = correction * C
+
+            push!(Q, C)
+            push!(irreps_out, (1, ir))
+        end
+    end
+
+    irreps_out = o3.simplify(o3.Irreps(irreps_out))
+    Q = vcat(Q...)
+    return irreps_out, Q
+end
+
 function find_Q_dist(P, Rs, ε=1e-9)
     PP = P * transpose(P)  # (a,a)
     
     irreps_out, Q = @distributed (append2) for ir in [keys(Rs)...]
         mul = length(Rs[ir])
-        base_o3 = []
-        for R in Rs[ir]
-            push!(base_o3, R)
-        end
         # base_o3/R == clebsch-gordan basis
-        base_o3 = cat(base_o3..., dims = ndims(Rs[ir][1])+1)
+        base_o3 = cat(Rs[ir]..., dims = ndims(Rs[ir][1])+1)
         base_o3 = permutedims(base_o3, [ndims(base_o3), 1:ndims(base_o3)-1...])
 
         R = reshape(base_o3, size(base_o3, 1), size(base_o3, 2), :)  # [multiplicity, ir, input basis] (u,j,omega)
@@ -453,57 +589,6 @@ function find_Q_dist(P, Rs, ε=1e-9)
 
     Q = vcat(Q...)
     irreps_out = o3.simplify(o3.Irreps(irreps_out))
-    return irreps_out, Q
-end
-
-function find_Q_serial(P, Rs, ε=1e-9)
-    Q = []
-    irreps_out = []
-
-    PP = P * transpose(P)  # (a,a)
-    
-    for ir in keys(Rs)
-        mul = length(Rs[ir])
-        base_o3 = []
-        for R in Rs[ir]
-            push!(base_o3, R)
-        end
-        # base_o3/R == clebsch-gordan basis
-        base_o3 = cat(base_o3..., dims = ndims(Rs[ir][1])+1)
-        base_o3 = permutedims(base_o3, [ndims(base_o3), 1:ndims(base_o3)-1...])
-
-        R = reshape(base_o3, size(base_o3, 1), size(base_o3, 2), :)  # [multiplicity, ir, input basis] (u,j,omega)
-
-        ### Solve X @ R[:, j] = Y @ P, but keep only X
-        RR = view(R, :, 1, :) * transpose(view(R, :, 1, :))  # (u,u)
-        RP = view(R, :, 1, :) * transpose(P)  # (u,a)
-
-        prob = cat(cat(RR, -RP, dims=2), cat(transpose(-RP), PP, dims=2), dims=1)
-        eigenvalues, eigenvectors = eigen(prob)
-        eigvec_filtered = eigenvectors[:, map(λ -> λ < ε, eigenvalues)]
-        if length(eigvec_filtered) > 0
-            X = eigvec_filtered[1:mul, :]  # [solutions, multiplicity]
-            proj_s = X * transpose(X)
-        else
-            proj_s = [0.0;;]
-        end
-
-        # look for an X such that Xᵀ * X = Projector
-        X, _ = orthonormalize(proj_s, ε)
-
-        for x in X
-            C = sum([x[ndx] .* selectdim(base_o3, 1, ndx) for ndx in 1:length(x)])
-            # C = torch.einsum("u,ui...->i...", x, base_o3)
-            correction = (o3.dim(ir) / sum(C.^2))^0.5
-            C = correction * C
-
-            push!(Q, C)
-            push!(irreps_out, (1, ir))
-        end
-    end
-
-    irreps_out = o3.simplify(o3.Irreps(irreps_out))
-    Q = vcat(Q...)
     return irreps_out, Q
 end
 
@@ -597,7 +682,7 @@ function reduced_product_dq(formula, irreps, filter_ir_out=nothing, filter_ir_mi
     return _rtp_dq(f0, formulas, irreps, filter_ir_out, filter_ir_mid, ε, parallel=parallel)
 end
 
-function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9; parallel=true) # for caching, f0 => len(f0), irreps => list
+function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9; parallel=false) # for caching, f0 => len(f0), irreps => list
     """divide and conquer - remove 1 index at a time"""
     # base case
     if length(f0) == 1
