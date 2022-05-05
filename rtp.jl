@@ -459,7 +459,7 @@ function find_Q_serial(P, Rs, ε=1e-9)
             X = eigvec_filtered[1:mul, :]  # [solutions, multiplicity]
             proj_s = X * transpose(X)
         else
-            proj_s = [0.0;;]
+            proj_s = zeros(1, 1)
         end
 
         # look for an X such that Xᵀ * X = Projector
@@ -503,7 +503,7 @@ function find_Q_dist(P, Rs, ε=1e-9)
             X = eigvec_filtered[1:mul, :]  # [solutions, multiplicity]
             proj_s = X * transpose(X)
         else
-            proj_s = [0.0;;]
+            proj_s = zeros(1, 1)
         end
 
         # look for an X such that Xᵀ * X = Projector
