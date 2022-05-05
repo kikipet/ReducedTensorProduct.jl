@@ -523,7 +523,7 @@ function find_Q_serial(P, Rs, ε=1e-9)
             X = eigvec_filtered[1:mul, :]  # [solutions, multiplicity]
             proj_s = X * transpose(X)
         else
-            proj_s = [0.0;;]
+            proj_s = zeros(1, 1)
         end
 
         # look for an X such that Xᵀ * X = Projector
@@ -567,7 +567,7 @@ function find_Q_dist(P, Rs, ε=1e-9)
             X = eigvec_filtered[1:mul, :]  # [solutions, multiplicity]
             proj_s = X * transpose(X)
         else
-            proj_s = [0.0;;]
+            proj_s = zeros(1, 1)
         end
 
         # look for an X such that Xᵀ * X = Projector
@@ -683,7 +683,7 @@ function reduced_product_dq(formula, irreps, filter_ir_out=nothing, filter_ir_mi
 end
 
 function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=nothing, ε=1e-9; parallel=false) # for caching, f0 => len(f0), irreps => list
-    """divide and conquer - remove 1 index at a time"""
+    """divide and conquer"""
     # base case
     if length(f0) == 1
         ir = o3.Irreps(irreps[only(f0)])
