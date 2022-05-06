@@ -10,3 +10,7 @@ for irrep in irreps
     @btime ReducedTensorProduct.reduced_product_dq("ijk=jik=kij", Dict('i' => $irrep), parallel=true)
     println("---")
 end
+
+for i in workers()
+    rmprocs(i)
+end
