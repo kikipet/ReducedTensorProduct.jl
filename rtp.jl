@@ -1,20 +1,11 @@
-@everywhere module ReducedTensorProduct
+module ReducedTensorProduct
 
-using Distributed
-# using SharedArrays
-# using Base.Threads
+using Base.Threads
 using IterTools
 using LinearAlgebra
 using Einsum
 include("irreps.jl")
 include("wigner.jl")
-@everywhere using Distributed
-@everywhere using IterTools
-@everywhere using LinearAlgebra
-@everywhere using Einsum
-@everywhere include("irreps.jl")
-@everywhere include("wigner.jl")
-
 
 function _wigner_nj(irrepss; normalization="component", filter_ir_mid=nothing)
     """
@@ -373,7 +364,6 @@ function find_R(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
 			sub_Q2 = reshape(sub_Q2, mul_ir2.mul, o3.dim(mul_ir2.ir), :)
 			k2 += o3.dim(mul_ir2)
 			for ir_out in mul_ir1.ir * mul_ir2.ir
-				push!(irreps_out, o3.MulIr(mul_ir1.mul * mul_ir2.mul, ir_out))
                 cg = Wigner.wigner_3j(mul_ir1.ir.l, mul_ir2.ir.l, ir_out.l)
                 ### einsums
                 m, i, a = size(sub_Q1)
@@ -409,6 +399,7 @@ function find_R(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
                 end
                 C = reshape(C, size(C, 1), size(C, 2), size(Q1)[2:end]..., size(Q2)[2:end]...)
                 if filter_ir_out === nothing || ir_out in filter_ir_out
+                    push!(irreps_out, o3.MulIr(mul_ir1.mul * mul_ir2.mul, ir_out))
                     if !(ir_out in keys(Rs))
                         Rs[ir_out] = []
                     end
@@ -420,18 +411,74 @@ function find_R(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
         end
     end
 	return o3.simplify(o3.Irreps(sort(irreps_out))), Rs
-    # return Rs
 end
 
-@everywhere function append2(t1, t2)
-    append!(t1[1], t2[1])
-    append!(t1[2], t2[2])
-    return t1
-end
-function append2(t1, t2)
-    append!(t1[1], t2[1])
-    append!(t1[2], t2[2])
-    return t1
+function find_R_thread(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
+	Rs = Dict() # dictionary of irreps -> matrix
+	irreps_out = []
+    lk = ReentrantLock()
+	k1 = 1
+	@threads for mul_ir1 in irreps1
+        lock(lk)
+        sub_Q1 = selectdim(Q1, 1, k1:k1 + o3.dim(mul_ir1) - 1)
+		sub_Q1 = reshape(sub_Q1, mul_ir1.mul, o3.dim(mul_ir1.ir), :)
+		k1 += o3.dim(mul_ir1)
+        unlock(lk)
+		k2 = 1
+		for mul_ir2 in irreps2
+            sub_Q2 = selectdim(Q2, 1, k2:k2 + o3.dim(mul_ir2) - 1)
+			sub_Q2 = reshape(sub_Q2, mul_ir2.mul, o3.dim(mul_ir2.ir), :)
+			k2 += o3.dim(mul_ir2)
+			for ir_out in mul_ir1.ir * mul_ir2.ir
+                cg = Wigner.wigner_3j(mul_ir1.ir.l, mul_ir2.ir.l, ir_out.l)
+                ### einsums
+                m, i, a = size(sub_Q1)
+                n, j, b = size(sub_Q2)
+                k = size(cg, 3)
+                # @einsum C_tmp[j, k, m, a] := sub_Q1[m, i, a] * cg[i, j, k]
+                C_tmp = zeros(j, k, m, a)
+                for em in 1:m
+                    for ej in 1:j
+                        for ek in 1:k
+                            c = zeros(a)
+                            for ei in 1:i
+                                c += view(sub_Q1, em, ei, :) * cg[ei, ej, ek]
+                            end
+                            C_tmp[ej, ek, em, :] = c
+                        end
+                    end
+                end
+                # @einsum C[m, n, k, a, b] := sub_Q2[n, j, b] * C_tmp[j, k, m, a]
+                C = zeros(m * n, k, a, b)
+                for em in 1:m
+                    for en in 1:n
+                        for ek = 1:k
+                            for ea in 1:a
+                                c = zeros(b)
+                                for ej in 1:j
+                                    c += view(sub_Q2, en, ej, :) * C_tmp[ej, ek, em, ea]
+                                end
+                                C[em + (en-1) * m, ek, ea, :] = c
+                            end
+                        end
+                    end
+                end
+                C = reshape(C, size(C, 1), size(C, 2), size(Q1)[2:end]..., size(Q2)[2:end]...)
+                lock(lk)
+                if filter_ir_out === nothing || ir_out in filter_ir_out
+                    push!(irreps_out, o3.MulIr(mul_ir1.mul * mul_ir2.mul, ir_out))
+                    if !(ir_out in keys(Rs))
+                        Rs[ir_out] = []
+                    end
+                    for i in 1:size(C, 1)
+                        push!(Rs[ir_out], selectdim(C, 1, i))
+                    end
+                end
+                unlock(lk)
+            end
+        end
+    end
+	return o3.simplify(o3.Irreps(sort(irreps_out))), Rs
 end
 
 function find_Q_serial(P, Rs, ε=1e-9)
@@ -481,10 +528,12 @@ function find_Q_serial(P, Rs, ε=1e-9)
     return irreps_out, Q
 end
 
-function find_Q_dist(P, Rs, ε=1e-9)
+function find_Q_thread(P, Rs, ε=1e-9)
     PP = P * transpose(P)  # (a,a)
-    
-    irreps_out, Q = @distributed (append2) for ir in [keys(Rs)...]
+    irreps_out = []
+    Q = []
+    lk = ReentrantLock()
+    @threads for ir in [keys(Rs)...]
         mul = length(Rs[ir])
         # base_o3/R == clebsch-gordan basis
         base_o3 = cat(Rs[ir]..., dims = ndims(Rs[ir][1])+1)
@@ -520,7 +569,11 @@ function find_Q_dist(P, Rs, ε=1e-9)
             push!(Q_tmp, C)
             mul_out += 1
         end
-        ([(mul_out, ir)], Q_tmp)
+        # ([(mul_out, ir)], Q_tmp)
+        lock(lk)
+        push!(irreps_out, (mul_out, ir))
+        append!(Q, Q_tmp)
+        unlock(lk)
     end
 
     Q = vcat(Q...)
@@ -588,7 +641,7 @@ function reduced_product(formula, irreps, filter_ir_out=nothing, filter_ir_mid=n
     irreps_in = [irreps[i] for i in f0]
 
     if parallel
-        irreps_out, Q = find_Q_dist(P, Rs)
+        irreps_out, Q = find_Q_thread(P, Rs)
     else
         irreps_out, Q = find_Q_serial(P, Rs)
     end
@@ -689,7 +742,11 @@ function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=noth
     _, out2, Q2 = _rtp_dq(f2, formulas2, Dict(c => irreps[c] for c in f2), filter_ir_out, filter_ir_mid, ε, parallel=parallel)
     
     ### combine Q1 and Q2
-    irreps_out, R = find_R(out1, out2, Q1, Q2, filter_ir_out)
+    if parallel
+        irreps_out, R = find_R_thread(out1, out2, Q1, Q2, filter_ir_out)
+    else
+        irreps_out, R = find_R(out1, out2, Q1, Q2, filter_ir_out)
+    end
 
     irreps_in = [irreps[i] for i in f0]
     
@@ -701,7 +758,7 @@ function _rtp_dq(f0, formulas, irreps, filter_ir_out=nothing, filter_ir_mid=noth
 
     ### otherwise, take extra global symmetries into account
     if parallel
-        irreps_out, Q = find_Q_dist(P, R)
+        irreps_out, Q = find_Q_thread(P, R)
     else
         irreps_out, Q = find_Q_serial(P, R)
     end

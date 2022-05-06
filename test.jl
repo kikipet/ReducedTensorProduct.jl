@@ -1,4 +1,4 @@
-include("rtp_dq.jl")
+include("rtp.jl")
 include("irreps.jl")
 using Einsum
 using LinearAlgebra
