@@ -414,16 +414,16 @@ function find_R(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
 end
 
 function find_R_thread(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
+    # what if I split Q1 and Q2 into chunks from the start?
 	Rs = Dict() # dictionary of irreps -> matrix
 	irreps_out = []
     lk = ReentrantLock()
-	k1 = 1
-	@threads for mul_ir1 in irreps1
-        lock(lk)
-        sub_Q1 = selectdim(Q1, 1, k1:k1 + o3.dim(mul_ir1) - 1)
+    slices = o3.slices(irreps1)
+	@threads for ndx in 1:length(slices) # product of irreps1, irreps2 ?   # how fast is collect(zip)
+    # @threads for (s, mul_ir1) in collect(zip(slices, irreps1)) # product of irreps1, irreps2 ?   # how fast is collect(zip)
+        sub_Q1 = selectdim(Q1, 1, slices[ndx][1]:slices[ndx][2]) # define slices instead of using k1
+        mul_ir1 = irreps1[ndx]
 		sub_Q1 = reshape(sub_Q1, mul_ir1.mul, o3.dim(mul_ir1.ir), :)
-		k1 += o3.dim(mul_ir1)
-        unlock(lk)
 		k2 = 1
 		for mul_ir2 in irreps2
             sub_Q2 = selectdim(Q2, 1, k2:k2 + o3.dim(mul_ir2) - 1)
@@ -577,7 +577,8 @@ function find_Q_thread(P, Rs, ε=1e-9)
     end
 
     Q = vcat(Q...)
-    irreps_out = o3.simplify(o3.Irreps(irreps_out))
+    # println(size(Q), size(P))
+    irreps_out = o3.simplify(o3.Irreps(irreps_out)) # sort??
     return irreps_out, Q
 end
 

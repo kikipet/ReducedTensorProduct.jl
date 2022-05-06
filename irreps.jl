@@ -219,6 +219,21 @@ function simplify(irreps)
     return Irreps(out)
 end
 
+function slices(irreps)
+    """List of slices corresponding to indices for each irrep.
+    Examples
+    --------
+    >>> Irreps('2x0e + 1e').slices()
+    [(1, 2), (3, 5)]
+    """
+    s = []
+    i = 1
+    for mul_ir in irreps
+        push!(s, (i, i + dim(mul_ir) - 1))
+        i += dim(mul_ir)
+    end
+    return s
+end
 
 function direct_sum(matrices)
     """Direct sum of matrices, put them in the diagonal
