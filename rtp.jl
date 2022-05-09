@@ -192,10 +192,10 @@ function orthonormalize(original, ε = 1e-9)
     end
 
     if length(final) == 0
-        final = zeros((0, dim)) # ?
+        final = zeros((0, dim))
     end
     if length(matrix) == 0
-        matrix = zeros((0, length(original))) # ?
+        matrix = zeros((0, length(original)))
     end
 
     return final, matrix
@@ -414,14 +414,12 @@ function find_R(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
 end
 
 function find_R_thread(irreps1, irreps2, Q1, Q2, filter_ir_out=nothing)
-    # what if I split Q1 and Q2 into chunks from the start?
 	Rs = Dict() # dictionary of irreps -> matrix
 	irreps_out = []
     lk = ReentrantLock()
     slices = o3.slices(irreps1)
-	@threads for ndx in 1:length(slices) # product of irreps1, irreps2 ?   # how fast is collect(zip)
-    # @threads for (s, mul_ir1) in collect(zip(slices, irreps1)) # product of irreps1, irreps2 ?   # how fast is collect(zip)
-        sub_Q1 = selectdim(Q1, 1, slices[ndx][1]:slices[ndx][2]) # define slices instead of using k1
+	@threads for ndx in 1:length(slices) # product of irreps1, irreps2
+        sub_Q1 = selectdim(Q1, 1, slices[ndx][1]:slices[ndx][2])
         mul_ir1 = irreps1[ndx]
 		sub_Q1 = reshape(sub_Q1, mul_ir1.mul, o3.dim(mul_ir1.ir), :)
 		k2 = 1
@@ -569,7 +567,6 @@ function find_Q_thread(P, Rs, ε=1e-9)
             push!(Q_tmp, C)
             mul_out += 1
         end
-        # ([(mul_out, ir)], Q_tmp)
         lock(lk)
         push!(irreps_out, (mul_out, ir))
         append!(Q, Q_tmp)
@@ -577,7 +574,6 @@ function find_Q_thread(P, Rs, ε=1e-9)
     end
 
     Q = vcat(Q...)
-    # println(size(Q), size(P))
     irreps_out = o3.simplify(o3.Irreps(irreps_out)) # sort??
     return irreps_out, Q
 end
