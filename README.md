@@ -11,4 +11,6 @@ The file `rtp.jl` defines a module `ReducedTensorProduct` containing two functio
 ```
 include("rtp.jl")
 irreps_in, irreps_out, Q = ReducedTensorProduct.reduced_product_dq("ijkl=jikl=klij", Dict('i' => "1o"), parallel=true)
+# or:
+irreps_in, irreps_out, Q = ReducedTensorProduct.reduced_product("ijkl=jikl=klij", Dict('i' => "1o"), parallel=false)
 ```
