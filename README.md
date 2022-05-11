@@ -14,3 +14,9 @@ irreps_in, irreps_out, Q = ReducedTensorProduct.reduced_product_dq("ijkl=jikl=kl
 # or:
 irreps_in, irreps_out, Q = ReducedTensorProduct.reduced_product("ijkl=jikl=klij", Dict('i' => "1o"), parallel=false)
 ```
+
+## Benchmarking
+This code was benchmarked on MIT Supercloud using the problem `ijk=jik=jki` with the irrep for index `i` being of the form `0e + 1o + 2e + ...`. As referenced in `benchmark.csv`, the parameters are
+* `n`: total number of CPUs
+* `N`: number of CPUs per node
+* `l`: the highest degree represented in `i`'s irrep; `l = 2` would be `0e + 1o + 2e`, etc.
