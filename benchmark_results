@@ -1,0 +1,32 @@
+DQ only
+1 cpu
+
+JAX w/ caching
+Benchmarking 0e
+Time: 31.877 µs
+Benchmarking 0e+1o
+Time: 46.849 µs
+Benchmarking 0e+1o+2e
+Time: 43.511 µs
+Benchmarking 0e+1o+2e+3o
+Time: 55.695 µs
+
+JAX w/o caching
+Benchmarking 0e
+Time: 8.296 ms
+Benchmarking 0e+1o
+Time: 17.437 ms
+Benchmarking 0e+1o+2e
+Time: 211.201 ms
+Benchmarking 0e+1o+2e+3o
+Time: 9.006 s
+
+Julia
+Benchmarking 0e
+Time: 989.261 μs
+Benchmarking 0e+1o
+Time: 6.659 ms
+Benchmarking 0e+1o+2e
+Time: 192.535 ms
+Benchmarking 0e+1o+2e+3o
+Time: 3.820 s

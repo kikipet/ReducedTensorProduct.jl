@@ -3,6 +3,8 @@ include("rtp.jl")
 
 irreps = ["0e", "0e+1o", "0e+1o+2e", "0e+1o+2e+3o"]
 
+println("Julia")
+
 for irrep in irreps
 	println("Benchmarking $irrep")
     print("Serial: ")
@@ -13,3 +15,5 @@ for irrep in irreps
 	@btime ReducedTensorProduct.reduced_product_dq("ijk=jik=kij", Dict('i' => $irrep), parallel = true)
 	println("---")
 end
+
+println("=====")
